@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+.env
+
+# IDE / yerel araç ayarları
+.idea/
+.claude/
+CLAUDE.md
+
+# Veri setleri repoya yüklenmez (yalnızca klasör yapısı için .gitkeep tutulur)
+data/**
+!data/raw/
+!data/processed/
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Eğitilmiş modeller
+models/*.joblib
