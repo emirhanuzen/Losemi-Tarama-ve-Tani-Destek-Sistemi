@@ -26,8 +26,8 @@ from sklearn.cluster import KMeans
 
 from src.config import (
     CELL_MARGIN_RATIO,
-    CELLS_DIR,
-    CELLS_INDEX_CSV,
+    CELLS_DIRS,
+    CELLS_INDEX_CSVS,
     DATASET_INDEX_CSV,
     KMEANS_K,
     KMEANS_MAX_PIXELS,
@@ -41,6 +41,7 @@ from src.config import (
     RBC_MIN_COVERAGE,
     RBC_MIN_INSCRIBED_RADIUS,
     SEGMENTATION_METHOD,
+    SEGMENTATION_METHODS,
     TARGET_LAB_BACKGROUND,
     WATERSHED_H_RATIO,
 )
@@ -417,6 +418,10 @@ def segment(steps: dict, method: str = SEGMENTATION_METHOD, image_type: str | No
 # Hücre çıkarma
 # ---------------------------------------------------------------------------
 
+# Kaydedilen maske dosyasındaki piksel kodları (öznitelik çıkarmada sitoplazma halkası komşu
+# çekirdekleri ve dolguyu dışlayabilsin diye tek bir 8 bit PNG'de saklanır)
+MASK_NUCLEUS, MASK_OTHER_NUCLEUS, MASK_PADDING = 255, 128, 64
+
 def extract_cells(image: np.ndarray, labels: np.ndarray, valid: np.ndarray, rbc_diameter: float) -> list[dict]:
     """
     Her çekirdeği, etrafında sitoplazma payı bırakarak kırpar.
@@ -431,7 +436,9 @@ def extract_cells(image: np.ndarray, labels: np.ndarray, valid: np.ndarray, rbc_
 
     Döndürür:
         Her hücre için {"kirpim" (RGB), "cekirdek_maskesi" (bool, yalnızca bu çekirdek),
-        "kutu" (x, y, w, h, kırpım koordinatları), "alan", "kenara_degiyor"} listesi.
+        "maske" (uint8 kodlu: MASK_NUCLEUS bu çekirdek, MASK_OTHER_NUCLEUS kırpıma giren komşu
+        çekirdekler, MASK_PADDING dolgu, 0 diğer), "kutu" (x, y, w, h, kırpım koordinatları),
+        "alan", "kenara_degiyor"} listesi.
         kenara_degiyor: çekirdek görüntü sınırına veya dolguya değiyor (hücre eksik olabilir).
     """
     margin = max(2, round(CELL_MARGIN_RATIO * rbc_diameter))
@@ -447,8 +454,13 @@ def extract_cells(image: np.ndarray, labels: np.ndarray, valid: np.ndarray, rbc_
             continue
         y0, y1 = max(0, sl[0].start - margin), min(h, sl[0].stop + margin)
         x0, x1 = max(0, sl[1].start - margin), min(w, sl[1].stop + margin)
-        nucleus = labels[y0:y1, x0:x1] == region
-        cells.append({"kirpim": image[y0:y1, x0:x1].copy(), "cekirdek_maskesi": nucleus,
+        window = labels[y0:y1, x0:x1]
+        nucleus = window == region
+        coded = np.zeros(window.shape, np.uint8)
+        coded[~valid[y0:y1, x0:x1]] = MASK_PADDING
+        coded[(window > 0) & ~nucleus] = MASK_OTHER_NUCLEUS
+        coded[nucleus] = MASK_NUCLEUS
+        cells.append({"kirpim": image[y0:y1, x0:x1].copy(), "cekirdek_maskesi": nucleus, "maske": coded,
                       "kutu": (x0, y0, x1 - x0, y1 - y0), "alan": int(nucleus.sum()),
                       "kenara_degiyor": bool((labels == region)[touching].any())})
     return cells
@@ -471,8 +483,8 @@ def save_png(image: np.ndarray, path: Path) -> None:
     buf.tofile(str(path))
 
 
-def build_cell_dataset(method: str = SEGMENTATION_METHOD, out_dir: Path = CELLS_DIR,
-                       index_csv: Path = CELLS_INDEX_CSV) -> pd.DataFrame:
+def build_cell_dataset(method: str = SEGMENTATION_METHOD, out_dir: Path | None = None,
+                       index_csv: Path | None = None) -> pd.DataFrame:
     """
     Tüm veri setinde çekirdekleri segmente edip hücre kırpımlarını ve hücre indeksini kaydeder.
 
@@ -482,12 +494,14 @@ def build_cell_dataset(method: str = SEGMENTATION_METHOD, out_dir: Path = CELLS_
 
     Parametreler:
         method: Segmentasyon yöntemi.
-        out_dir: Kırpımların kaydedileceği klasör (data/processed/cells/).
-        index_csv: Hücre indeksinin yolu (data/processed/cells_index.csv).
+        out_dir: Kırpımların klasörü (None: config.CELLS_DIRS[method]).
+        index_csv: Hücre indeksinin yolu (None: config.CELLS_INDEX_CSVS[method]).
 
     Döndürür:
         Hücre indeksi DataFrame'i.
     """
+    out_dir = out_dir or CELLS_DIRS[method]
+    index_csv = index_csv or CELLS_INDEX_CSVS[method]
     index = pd.read_csv(DATASET_INDEX_CSV)
     rows, start = [], time.time()
     for i, image_row in index.iterrows():
@@ -499,7 +513,7 @@ def build_cell_dataset(method: str = SEGMENTATION_METHOD, out_dir: Path = CELLS_
         for k, cell in enumerate(cells):
             name = f"{image_row['etiket']}_{i:04d}_{k:02d}"
             save_png(cell["kirpim"], class_dir / f"{name}.png")
-            save_png(cell["cekirdek_maskesi"], class_dir / f"{name}_maske.png")
+            save_png(cell["maske"], class_dir / f"{name}_maske.png")
             x, y, w, h = cell["kutu"]
             rows.append({
                 "hucre_id": name, "kirpim_yolu": str(class_dir / f"{name}.png"),
@@ -510,7 +524,7 @@ def build_cell_dataset(method: str = SEGMENTATION_METHOD, out_dir: Path = CELLS_
                 "cekirdek_alani": cell["alan"], "kutu_x": x, "kutu_y": y, "kutu_w": w, "kutu_h": h,
                 "segmentasyon_yontemi": method})
         if (i + 1) % 100 == 0 or i + 1 == len(index):
-            print(f"  [hücre çıkarma] {i + 1}/{len(index)} görüntü, {len(rows)} hücre ({time.time() - start:.0f} sn)",
+            print(f"  [hücre çıkarma: {method}] {i + 1}/{len(index)} görüntü, {len(rows)} hücre ({time.time() - start:.0f} sn)",
                   flush=True)
     cells_df = pd.DataFrame(rows)
     cells_df.to_csv(index_csv, index=False, encoding="utf-8")
@@ -539,6 +553,10 @@ def report_cells(cells: pd.DataFrame) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    print(f"Hücre çıkarma ({SEGMENTATION_METHOD}) başlıyor; görüntüler tek tek işleniyor...")
-    cell_index = build_cell_dataset()
-    print(report_cells(cell_index).to_string())
+    import sys
+
+    # Varsayılan: seçilen yöntem. "--hepsi": üç yöntem (Adım 5'teki karşılaştırma için).
+    methods = SEGMENTATION_METHODS if "--hepsi" in sys.argv else [SEGMENTATION_METHOD]
+    for m in methods:
+        print(f"Hücre çıkarma ({m}) başlıyor; görüntüler tek tek işleniyor...")
+        print(report_cells(build_cell_dataset(m)).to_string())

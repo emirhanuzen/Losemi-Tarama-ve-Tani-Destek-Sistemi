@@ -44,5 +44,8 @@ python -m src.dataset              # veri seti indeksi ve analizi (outputs/datas
 python -m src.preprocessing_analysis  # ön işleme karşılaştırmaları (outputs/preprocessing/)
 python -m src.segmentation_analysis   # segmentasyon karşılaştırması (outputs/segmentation/)
 python -m src.segmentation            # hücre çıkarma (data/processed/cells/, cells_index.csv)
+python -m src.segmentation --hepsi    # üç yöntemle hücre çıkarma (Adım 5 karşılaştırması)
+python -m src.features               # öznitelik tabloları (data/processed/features_<yöntem>.csv)
+python -m src.features_analysis      # kısayol testi, öznitelik önemi, figürler (outputs/features/)
 streamlit run app/streamlit_app.py
 ```

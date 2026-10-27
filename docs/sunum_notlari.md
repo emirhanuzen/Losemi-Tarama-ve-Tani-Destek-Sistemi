@@ -631,12 +631,24 @@ kırpımlar `data/processed/cells/<sınıf>/` (repoya yüklenmez).
 - `extract_cells` her çekirdeğin sınır kutusunu her yönde 0.5 × eritrosit çapı genişletip kırpar.
   Kırpım renk normalize RGB görüntüden alınır.
 - Her hücre için kaydedilenler:
-  - kırpım (`<sınıf>_<görüntü>_<hücre>.png`) ve çekirdek maskesi (`..._maske.png`),
+  - kırpım (`<sınıf>_<görüntü>_<hücre>.png`) ve kodlu maske (`..._maske.png`: 255 = bu çekirdek,
+    128 = kırpıma giren komşu çekirdek, 64 = dolgu, 0 = diğer; Adım 4'te sitoplazma halkası için),
   - kaynak dosya, `grup_id`, etiket, görüntü tipi,
   - eritrosit çapı ve tahminin güvenilir olup olmadığı,
   - **görüntü/dolgu sınırına değip değmediği** (`kenara_degiyor`; hücre eksik olabilir),
   - çekirdek alanı ve kutu koordinatları.
 - Tüm 1800 görüntü tek tek işlendi (~2.5 dk); **18.317 hücre** (36.634 dosya) çıkarıldı.
+  Adım 4'te maskeler kodlu hâle getirilip çıkarma yeniden çalıştırıldı: K-means 18.316 hücre verdi
+  (AML'de 1 eksik). Sabit `random_state`'e rağmen oluşan bu fark muhtemelen paralel kayan nokta
+  toplamından kaynaklanıyor (doğrulanmadı).
+- Adım 5'teki karşılaştırma için Otsu ve Watershed ile de çıkarma yapıldı
+  (`python -m src.segmentation --hepsi`; `data/processed/cells_otsu/`, `cells_watershed/`):
+
+  | Yöntem | ALL | AML | Healthy | Toplam | Hücresiz Healthy görüntüsü |
+  |--------|----:|----:|--------:|-------:|------:|
+  | K-means | 3.080 | 14.058 | 1.178 | 18.316 | 63 |
+  | Otsu | 3.020 | 8.780 | 1.300 | 13.100 | 9 |
+  | Watershed | 3.058 | 9.614 | 1.300 | 13.972 | 9 |
 
 | Sınıf | Tip | Görüntü | Hücresiz görüntü | Hücre | Hücre/görüntü (medyan) | Kenara değen | Hücreli grup |
 |-------|-----|------:|------:|------:|------:|------:|------:|
@@ -660,5 +672,223 @@ kırpımlar `data/processed/cells/<sınıf>/` (repoya yüklenmez).
   - [hucre_ornekleri.png](../outputs/segmentation/hucre_ornekleri.png) incelemesinde gözlenen hatalar:
     - AML'de kenarda ince şeritler, birleşik kalan çekirdek çiftleri ve bir zincir şeklinde nesne,
     - Healthy'de birkaç küçük ve soluk nesne (trombosit kümesi veya soluk lökosit olabilir; doğrulanmadı).
+
+---
+
+## Adım 4 — Öznitelik Çıkarma
+
+**Ne yapıldı:**
+- `src/features.py` dolduruldu. Her hücre kırpımından (Adım 3; renk normalize RGB = `preprocess()`'in
+  `renk_normalize` çıktısı) ve kodlu çekirdek maskesinden **58 öznitelik** çıkarılıyor:
+  **11 şekil + 28 renk + 19 doku**.
+- Üç segmentasyon yöntemi için ayrı tablolar üretildi (`python -m src.features`, toplam ~5.5 dk; hücreler tek tek okundu):
+  `data/processed/features_kmeans.csv` (18.316 hücre), `features_otsu.csv` (13.100), `features_watershed.csv` (13.972).
+- **Sütun düzeni (kısayol koruması):**
+  - Öznitelikler `sekil_`, `renk_`, `doku_` önekli; `features.feature_columns()` yalnızca bunları döndürür.
+  - Sınıflandırmada **kullanılmayacak** her şey `meta_` önekli: kaynak dosya, görüntü tipi, görüntü
+    boyutu, hücre konumu (kutu), segmentasyon yöntemi, kenara değme, eritrosit çapı, ham piksel alan/çevre,
+    N/C. Bunların yanında `etiket`, `grup_id`, `hucre_id` da var.
+  - Bu ayrım Adım 5'te kısayol sütunlarının yanlışlıkla modele girmesini yapısal olarak engeller.
+- `src/features_analysis.py` kısayol testini, önem sıralamasını ve figürleri üretir
+  (`python -m src.features_analysis`). Analiz seçilen yöntemin (K-means) tablosu üzerinde yapıldı.
+
+### 4.1 Ölçek normalizasyonu — neden gerekli?
+
+[olcek_normalizasyonu.png](../outputs/features/olcek_normalizasyonu.png),
+[kisayol_testi.csv](../outputs/features/kisayol_testi.csv)
+
+- Veri setinde iki büyütme var: yaymada eritrosit ~10 px, yakın çekimde ~62 px. Aynı çekirdek yakın
+  çekimde ~40 kat daha çok piksel kaplar. Yakın çekimlerin neredeyse tamamı ALL'da olduğu için ham piksel
+  ölçüleri "ALL"ı değil **"büyütmeyi"** öğretir. Bu bir kısayoldur: model, aynı hücrenin farklı
+  büyütmedeki fotoğrafında yanılır.
+- **Çözüm, iki katmanlı:**
+  1. Boyut ölçüleri eritrosit çapına oranlanır: alan/d², çevre/d, eksenler/d. Eritrosit, her görüntüde
+     bulunan doğal bir "cetvel"dir (~7.5 µm).
+  2. Her hücre önce eritrosit çapı **10 px** olacak şekilde yeniden örneklenir; şekil, renk ve doku bu
+     **ortak ölçekte** hesaplanır. Doku için gerekli: GLCM'nin "1 piksel" mesafesi yakın çekimde kromatinin
+     çok küçük bir parçası, yaymada çekirdek çapının onda biridir.
+- **Kısayol testi:** Tek bir ölçüyle görüntü tipini (yayma / yakın çekim) tahmin eden lojistik regresyon;
+  5 katlı `StratifiedGroupKFold` (grup = `grup_id`), dengeli sınıf ağırlığı. ROC AUC 0.5 = tip hakkında bilgi yok.
+
+  | Ölçü | Tüm hücreler AUC | Yalnızca ALL AUC |
+  |------|------:|------:|
+  | Alan (ham piksel) | **0.99** | **1.00** |
+  | Alan / eritrosit çapı² | **0.46** | **0.55** |
+  | Çevre (ham piksel) | 0.96 | 1.00 |
+  | Çevre / eritrosit çapı | 0.43 | 0.58 |
+  | GLCM contrast d1 (yerel ölçek; örnek 800 hücre) | 0.95 | 0.99 |
+  | GLCM contrast d1 (referans ölçek; aynı örnek) | 0.57 | 0.77 |
+
+  - Ham alan görüntü tipini neredeyse kusursuz ele veriyor. Oranlanmış alan şans düzeyine iniyor.
+  - "Yalnızca ALL" satırı önemli: ALL'da iki tip dengeli olduğu için sınıf farkı tip tahminine karışmaz.
+  - Doku için referans ölçek bağımlılığı büyük ölçüde azaltıyor ama tamamen gidermiyor (ALL'da 0.77).
+    Küçültme pikselleri ortaladığı için yakın çekimlerin doku/renk varyansı daha düşük çıkıyor.
+- **En ayırt edici 10 özniteliğin artık tip bağımlılığı** (yalnızca ALL; [ust_oznitelik_tip_bagimliligi.csv](../outputs/features/ust_oznitelik_tip_bagimliligi.csv)):
+  - Ortalama tabanlı en güçlü öznitelikler tipten bağımsız: çekirdek L 0.46, çekirdek−halka L farkı 0.53, halka L 0.57.
+  - **Std tabanlı** öznitelikler tipi kısmen taşıyor: çekirdek S std 0.81, GLCM contrast d2 0.78, çekirdek L std 0.74.
+  - **Adım 5 için öneri:** sınıflandırma başarısı yayma ve yakın çekim için ayrı raporlanmalı. Std/doku
+    öznitelikleri çıkarılınca başarının ne kadar değiştiği kontrol edilmeli.
+
+### 4.2 Şekil öznitelikleri (11)
+
+Çekirdek maskesinden, referans ölçekte (`skimage.measure.regionprops` + OpenCV konturları):
+
+| Öznitelik | Tanım | Ne ölçer |
+|-----------|-------|----------|
+| `sekil_alan` | alan / d² | Çekirdek büyüklüğü (eritrosit cinsinden) |
+| `sekil_cevre` | çevre / d | Sınır uzunluğu |
+| `sekil_dairesellik` | 4πA / P² | 1 = tam daire; girintili/düzensiz sınır düşürür |
+| `sekil_eksantrisite` | eşdeğer elipsin odak uzaklığı / büyük eksen | 0 = daire, 1'e yaklaştıkça uzun |
+| `sekil_solidity` | alan / dışbükey örtü alanı | Girinti (çentik, lob arası bel) varsa düşer |
+| `sekil_extent` | alan / sınır kutusu alanı | Kutuyu doldurma oranı |
+| `sekil_buyuk_eksen`, `sekil_kucuk_eksen` | eşdeğer elips eksenleri / d | Boyut ve uzama |
+| `sekil_eksen_orani` | küçük / büyük eksen | 1 = yuvarlak |
+| `sekil_lob_sayisi` | derinliği ≥ 0.15 d olan dışbükeylik kusurlarından | Çok loblu çekirdek (nötrofil) |
+| `sekil_girinti_derinligi` | en derin dışbükeylik kusuru / d | Böbrek/at nalı şekli (monosit) |
+
+- **Lob sayısının sınırlılığı:** Lob sayısı, iki lob arasındaki "bel"in iki yanındaki girintilerden
+  sayılır. n ≥ 2 derin girinti → n lob; tek girinti böbrek şeklidir. Ancak 10 px eritrosit ölçeğinde
+  nötrofil lobları ~3 px; ayırt edilemiyor. Healthy çekirdeklerinin %99'u tek lob çıktı. AML'deki
+  yüksek lob sayıları büyük olasılıkla birleşik kalmış çekirdek kümeleri (öznitelik önem sırası 39/58).
+- **N/C oranı (meta veri, öznitelik değil):** Sitoplazma = çekirdeğe ≤ 0.5 d uzaklıkta, normalize ters b\*
+  değeri zeminden ≥ 5 yüksek (mavimsi) ve çekirdeğe bağlı pikseller.
+  - Yalnızca yerel eritrosit çapı ≥ 25 px olan hücrelerde güvenilir. Yaymalarda sitoplazma 1-2 px'lik
+    bir bant; JPEG + yeniden boyutlandırma + medyan filtrenin yarattığı sınır bulanıklığından ayrılamıyor
+    (yaymalarda çekirdeğe en yakın 0-1.5 px halka sitoplazmadan bağımsız olarak hep "renkli" çıktı).
+  - Güvenilir N/C: ALL yakın çekimlerinde 274 hücre, medyan **0.81** (lenfoblastların bilinen yüksek N/C
+    oranıyla uyumlu). Diğer sınıflarda neredeyse hiç yok: AML yakın çekimlerinde eritrosit ~20 px.
+  - **Neden öznitelik değil:** N/C'nin var olup olmaması doğrudan "ALL yakın çekim" demek. Öznitelik
+    olarak kullanılsaydı yeni bir kısayol olurdu. `meta_nc_orani` ve `meta_nc_durum`
+    (güvenilir / düşük_çözünürlük / sitoplazma_kesik) olarak tabloda duruyor.
+
+### 4.3 Renk öznitelikleri (28)
+
+- **Bölgeler:**
+  - **Çekirdek:** segmentasyon maskesi.
+  - **Çekirdek çevresi halkası:** çekirdekten 1 px boşluk (sınır bulanıklığı çekirdek rengini taşır),
+    sonra 0.2 × d (2 px) genişlik. Kırpıma giren komşu çekirdekler ve dolgu kodlu maskeden dışlanır.
+    Yaymada bu halka sitoplazma + yakın çevreyi birlikte ölçer (çözünürlük sınırı). Daha geniş bir halka
+    çoğunlukla zemini ölçerdi: 0.3-0.5 d halkasının medyan rengi zemine eşit çıktı.
+- **Kanallar:** Gerçek ölçekte Lab (L\* 0-100, a\*, b\*) ve HSV (H derece, S/V 0-1). Her bölge ve kanal
+  için ortalama ve std: 2 bölge × 6 kanal × 2 = 24.
+  - **H dairesel ele alınır:** 350° ve 10°'nin ortalaması 0° olmalı, 180° değil. Dairesel ortalama
+    (sin/cos ortalamasının açısı) ve dairesel std kullanılır.
+- **Çekirdek − halka farkı:** ΔL\*, Δa\*, Δb\* ve ΔE (Lab'da Öklid renk farkı) = 4.
+- Renk normalizasyonu (Adım 2.3) zemini hizaladığı için mutlak renk değerleri görüntüler arasında karşılaştırılabilir.
+
+### 4.4 GLCM doku öznitelikleri (19)
+
+[glcm_ornekleri.png](../outputs/features/glcm_ornekleri.png)
+
+**GLCM nedir? (basit dille)**
+- Gri seviye eş-oluşum matrisi, "yan yana duran iki pikselin gri seviyeleri ne sıklıkla (i, j) çiftini
+  oluşturuyor?" sorusunun sayım tablosudur.
+- Satır i bir pikselin, sütun j belirli bir mesafe ve yöndeki komşusunun gri seviyesidir.
+  - **Düzgün bir çekirdekte** komşular hep benzer tondadır; sayılar köşegende toplanır.
+  - **Benekli, kaba kromatinli bir çekirdekte** komşular farklıdır; sayılar köşegenden uzağa yayılır.
+- Matris olasılığa çevrilir, ardından altı özet sayı hesaplanır:
+
+| Özellik | Formül (P = olasılık matrisi) | Basit anlamı |
+|---------|------|------|
+| **contrast** | Σ P(i,j) · (i − j)² | Komşular arası ton farkının büyüklüğü; büyük farkları ağır cezalandırır. Kaba/benekli kromatin → yüksek |
+| **dissimilarity** | Σ P(i,j) · \|i − j\| | Aynı fikir ama doğrusal; uç farklara daha az duyarlı |
+| **homogeneity** | Σ P(i,j) / (1 + (i − j)²) | Komşuların ne kadar benzer olduğu; düzgün, ince kromatin → yüksek |
+| **energy** | √ASM | Düzenlilik; az sayıda tekrar eden ton çifti → yüksek |
+| **ASM** (açısal ikinci moment) | Σ P(i,j)² | Matrisin "tekdüzeliği"; P birkaç hücrede toplanırsa yüksek |
+| **correlation** | Σ (i − μᵢ)(j − μⱼ) P(i,j) / (σᵢ σⱼ) | Komşu tonların doğrusal ilişkisi; büyük, yumuşak geçişli yapılar → yüksek, rastgele benek → düşük |
+| **entropi** (ek; çekirdek içi gri seviye histogramından) | −Σ p log₂ p | Ton çeşitliliği / düzensizlik |
+
+- **Yalnızca çekirdek içinde:** `skimage.graycomatrix` maske desteklemez. Maske dışı pikseller ayrılmış
+  33. gri seviyeye atanır, 33 seviyeli matris hesaplanır ve bu seviyenin satır/sütunu silinir. Böylece en
+  az bir ucu çekirdek dışında olan çiftler sayılmaz; çekirdek sınırı ve zemin dokuya karışmaz.
+- **32 gri seviye:**
+  - Referans ölçekte yayma çekirdekleri ~100-250 px. 256 seviyede 65.536 hücreli matris neredeyse
+    tamamen boş kalır ve olasılıklar güvenilmez olur. 32 seviyede 1.024 hücre var.
+  - Seviye genişliği ~4 L birimi (8 bit), zemin gürültüsü düzeyinde; daha ince niceleme çoğunlukla gürültü eklerdi.
+  - Niceleme aralığı L (8 bit) 15-145: referans ölçekte çekirdek piksellerinin %0.5-%99.5 yüzdelikleri
+    (18-142). Sabit aralık kullanılır, çünkü normalizasyon sonrası aynı seviye her görüntüde aynı koyuluk
+    demektir. Hücre başına min-max germe, soluk çekirdeklerin gürültüsünü doku gibi büyütürdü.
+- **Mesafeler 1, 2, 3 px:** Referans ölçekte çekirdek çapı ~12-20 px. 3 px kromatin topaklarının ölçeği;
+  daha büyük mesafelerde çiftlerin çoğu çekirdek dışına taşar.
+- **4 açının ortalaması (0°, 45°, 90°, 135°):** Veri setinde döndürülmüş kopyalar var. Tek bir yönün
+  özelliği (ör. yatay komşular) hücrenin dönme açısına bağlı olurdu: aynı hücre 90° döndürülünce farklı
+  bir değer verirdi. Dört açının ortalaması dönmeye (yaklaşık) duyarsızdır. 4 açı × 3 mesafe hesaplanıp
+  her mesafe için açılar ortalanır: 6 özellik × 3 mesafe + entropi = 19.
+- **Gözlem:** Örnek figürde ALL'ın GLCM'si köşegene en sıkı toplanmış olanı (contrast 7.9). AML ve Healthy
+  örneklerinde köşegenden uzak hücreler daha dolu (contrast ~13).
+
+### 4.5 Analiz
+
+**En ayırt edici öznitelikler** ([oznitelik_onemi.csv](../outputs/features/oznitelik_onemi.csv),
+[oznitelik_dagilimlari.png](../outputs/features/oznitelik_dagilimlari.png)):
+- ANOVA F-skoru (sınıf ortalamaları arası fark / sınıf içi yayılım) ve karşılıklı bilgi (öznitelik ile
+  etiket arasındaki doğrusal olmayan bağımlılık dahil) kullanıldı.
+- **Yalnızca betimleyicidir:** tüm veriyle hesaplandı. Gerçek öznitelik seçimi Adım 5'te çapraz
+  doğrulamanın **içinde**, yalnızca eğitim katında yapılacak; aksi hâlde test katının bilgisi seçime sızar.
+
+| Sıra | Öznitelik | F | Karşılıklı bilgi (sıra) | Medyan ALL / AML / Healthy |
+|---:|-----------|------:|------:|------|
+| 1 | `renk_cekirdek_V_ort` | 6002 | 0.30 (1) | 0.45 / 0.59 / 0.52 |
+| 2 | `renk_fark_L` (çekirdek − halka) | 5582 | 0.28 (2) | −41.0 / −23.3 / −31.8 |
+| 3 | `renk_cekirdek_L_ort` | 4374 | 0.23 (3) | 22.9 / 35.8 / 34.6 |
+| 4 | `renk_halka_L_ort` | 2255 | 0.17 (9) | 64.0 / 58.8 / 67.1 |
+| 5 | `renk_halka_S_ort` | 2110 | 0.18 (5) | 0.13 / 0.20 / 0.12 |
+| 6 | `renk_halka_a_std` | 2044 | 0.19 (4) | 4.3 / 6.5 / 3.4 |
+| 7 | `renk_halka_b_std` | 1942 | 0.17 (8) | 4.6 / 7.1 / 3.9 |
+| 8 | `renk_cekirdek_L_std` | 1872 | 0.15 (12) | 6.7 / 5.1 / 7.9 |
+| 9 | `doku_contrast_d2` | 1867 | 0.13 (17) | 18.1 / 12.8 / 32.1 |
+| 10 | `renk_cekirdek_S_std` | 1703 | 0.14 (15) | 0.14 / 0.10 / 0.12 |
+
+- En iyi şekil özniteliği `sekil_dairesellik` 26. sırada (medyan ALL 0.90 / AML 0.82 / Healthy 0.99).
+  Healthy çekirdekleri en yuvarlak, AML en düzensiz (AML'de birleşik kalan çekirdekler de bunu düşürüyor).
+  Oranlanmış alan 52. sırada (ALL 2.25 / AML 1.96 / Healthy 1.25 eritrosit alanı).
+
+**Lösemi açısından yorum (dikkatli):**
+- **ALL çekirdekleri belirgin şekilde daha koyu** (L\* 22.9'a karşı 35.8 / 34.6) ve çevresiyle kontrastları
+  en yüksek (ΔL −41). Lenfoblastların dar sitoplazmalı, yoğun boyanan büyük çekirdekleriyle uyumlu.
+  Bu fark yalnızca yaymalarda da aynı (ALL 22.9, AML 35.8, Healthy 34.6) ve görüntü tipini ele vermiyor
+  (AUC 0.46); yani büyütme kısayolu değil.
+  - Ancak **boyanma/kaynak farkı olasılığı dışlanamaz**. Veri setinin klinik kaynağı belirtilmemiş; her
+    sınıf farklı bir laboratuvardan geliyorsa "koyuluk" biyoloji değil boya protokolü olabilir. Renk
+    normalizasyonu zemini hizalıyor ama çekirdek boyanma yoğunluğunu hizalamıyor (hizalamamalı da, çünkü
+    bu bilgi biyolojik olabilir).
+- **AML'de halka renkli ve değişken** (halka S, a\*/b\* std yüksek). Miyeloblastların daha geniş, bazofilik
+  ve granüllü sitoplazmasıyla uyumlu. Kısmen yoğun AML kümelerinde halkaya komşu hücrelerin girmesinden de
+  kaynaklanıyor olabilir.
+- **Healthy'de doku kontrastı en yüksek** (contrast d2 32.1). Olgun lenfositlerin kaba, topaklı kromatini
+  ile blastların ince, dağınık kromatini arasındaki bilinen farkla uyumlu.
+- En güçlü öznitelikler renk/parlaklıktan geliyor. Adım 5'te öznitelik grupları (yalnız şekil, yalnız
+  renk, yalnız doku) ayrı ayrı denenmeli.
+
+**Korelasyon** ([korelasyon.png](../outputs/features/korelasyon.png), [yuksek_korelasyon.csv](../outputs/features/yuksek_korelasyon.csv)):
+- |r| > 0.95 olan **8 çift** var ve hepsi aynı GLCM özelliğinin komşu mesafeleri:
+  - energy d1–d2 (0.99), dissimilarity d1–d2 (0.98), homogeneity d1–d2 (0.98), contrast d1–d2 (0.98), ASM d1–d2 (0.98),
+  - dissimilarity d2–d3 (0.96), contrast d2–d3 (0.96), contrast d3–dissimilarity d3 (0.96).
+- Mesafeler büyük ölçüde aynı bilgiyi taşıyor. Ayrıca energy = √ASM olduğundan ikisi tanım gereği
+  monoton ilişkilidir; doğrusal olmayan bu ilişki Pearson r'de 0.95'in altında kalıyor.
+- Adım 5'te korelasyon filtresi veya PCA çapraz doğrulama içinde uygulanabilir.
+
+**Kenara değen hücreler** ([kenar_etkisi.csv](../outputs/features/kenar_etkisi.csv); Cohen's d, |d| ≥ 0.8 büyük etki):
+
+| Sınıf | Kenara değen | Alan (medyan oranı, d) | Küçük eksen (d) | Eksen oranı (d) | Eksantrisite (d) |
+|-------|------:|------|------:|------:|------:|
+| ALL | 595 / 3.080 (%19) | 0.59, −0.54 | −1.09 | −1.10 | +0.89 |
+| AML | 3.725 / 14.058 (%27) | 0.85, +0.22 | +0.14 | −0.50 | +0.40 |
+| Healthy | 61 / 1.178 (%5) | 0.39, −0.74 | −0.76 | −0.28 | +0.21 |
+
+- Kenara değen ALL ve Healthy çekirdekleri belirgin şekilde **kesik**: alan %41 / %61 küçük, daha uzun
+  ve dar (eksen oranı ve küçük eksende büyük etki).
+- AML'de alan ters yönde (+0.22). Muhtemelen kenara değen AML nesnelerinin bir kısmı görüntü kenarındaki
+  birleşik kümeler (doğrulanmadı).
+- **Öneri (Adım 5):**
+  - Eğitimde kenara değen hücreleri **dışla**. Şekil öznitelikleri sistematik olarak bozuk ve bu bozulma
+    sınıfa göre farklı (ALL %19, Healthy %5); model "kesik çekirdek"i sınıf ipucu olarak öğrenebilir.
+  - Tahmin ve risk skorunda bu hücreler sayılabilir ama sınıflandırma sonucu düşük güvenle işaretlenmeli.
+  - Karşılaştırma için "kenarlar dahil" varyantı da raporlanmalı. Dışlamak AML'de ~%27 veri kaybı demek;
+    hücre sayısı yeterli.
+
+**Özet:** 58 öznitelik (11 şekil + 28 renk + 19 doku). Ölçek normalizasyonu ham boyut ölçülerinin
+büyütme kısayolunu ortadan kaldırıyor (AUC 0.99 → 0.46), doku ölçülerininkini büyük ölçüde azaltıyor
+(0.95 → 0.57). En ayırt edici öznitelikler çekirdek parlaklığı ve çekirdek−çevre kontrastı.
 
 ---

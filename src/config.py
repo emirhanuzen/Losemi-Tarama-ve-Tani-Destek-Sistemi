@@ -32,8 +32,15 @@ ABNORMAL_CLASSES = ["ALL", "AML"]  # Risk skorunda "anormal" sayılan sınıflar
 # Veri seti indeksi (dosya yolu, etiket, grup_id, görüntü tipi ...) bu CSV'ye yazılır
 DATASET_INDEX_CSV = PROCESSED_DATA_DIR / "dataset_index.csv"
 DUPLICATE_PAIRS_CSV = PROCESSED_DATA_DIR / "kopya_ciftleri.csv"
-CELLS_DIR = PROCESSED_DATA_DIR / "cells"                 # Hücre kırpımları (Adım 3)
+CELLS_DIR = PROCESSED_DATA_DIR / "cells"                 # Hücre kırpımları (Adım 3, seçilen yöntem: K-means)
 CELLS_INDEX_CSV = PROCESSED_DATA_DIR / "cells_index.csv"
+# Üç segmentasyon yönteminin hücre kırpımları, hücre indeksleri ve öznitelik tabloları (Adım 4-5)
+SEGMENTATION_METHODS = ["kmeans", "otsu", "watershed"]
+CELLS_DIRS = {"kmeans": CELLS_DIR, "otsu": PROCESSED_DATA_DIR / "cells_otsu",
+              "watershed": PROCESSED_DATA_DIR / "cells_watershed"}
+CELLS_INDEX_CSVS = {"kmeans": CELLS_INDEX_CSV, "otsu": PROCESSED_DATA_DIR / "cells_index_otsu.csv",
+                    "watershed": PROCESSED_DATA_DIR / "cells_index_watershed.csv"}
+FEATURES_CSVS = {m: PROCESSED_DATA_DIR / f"features_{m}.csv" for m in SEGMENTATION_METHODS}
 
 RANDOM_STATE = 42  # Tekrarlanabilir sonuçlar için sabit rastgelelik tohumu
 
@@ -183,3 +190,59 @@ WATERSHED_H_RATIO = 0.15
 # Hücre kırpımı: çekirdeğin sınır kutusu her yönde 0.5 × eritrosit çapı genişletilir; blastların
 # dar sitoplazması ve lökositlerin sitoplazma halkası kırpıma girer, komşu hücreler az girer.
 CELL_MARGIN_RATIO = 0.5
+
+# ---------------------------------------------------------------------------
+# Öznitelik çıkarma parametreleri (gerekçeler: docs/sunum_notlari.md — Adım 4,
+# öznitelik tabloları: python -m src.features, analiz: python -m src.features_analysis)
+# ---------------------------------------------------------------------------
+# Yalnızca bu öneklere sahip sütunlar öznitelik sayılır; meta_* sütunları (görüntü tipi/boyutu,
+# konum, yöntem, ham piksel ölçüleri, N/C) sınıflandırmada KULLANILMAZ.
+FEATURE_PREFIXES = ("sekil_", "renk_", "doku_")
+
+# Referans ölçek: her hücre eritrosit çapı 10 px olacak şekilde yeniden örneklenir, tüm
+# öznitelikler bu ölçekte hesaplanır. 10 px yaymaların doğal ölçeği (hücrelerin %98'i yaymadan);
+# yakın çekimler (~62 px) küçültülür, böylece piksel mesafeli doku ölçüleri (GLCM d=1-3 px) her
+# hücrede aynı fiziksel uzunluğa karşılık gelir. Ölçeklemeden GLCM kontrastı görüntü tipini
+# AUC 0.95 ile ele veriyordu; referans ölçekte 0.57.
+FEATURE_REF_RBC_DIAMETER = 10
+
+# GLCM: 32 gri seviye. Referans ölçekte yayma çekirdekleri ~100-250 px; 256 seviyede matris
+# 65.536 hücreli olur ve neredeyse tamamen boş kalır (olasılıklar güvenilmez). 32 seviyede
+# 1.024 hücre; seviye genişliği ~4 L birimi (8 bit), zemin gürültüsü (std ~3-5) düzeyinde, yani
+# daha ince nicelemenin ekleyeceği ayrım çoğunlukla gürültü olurdu.
+GLCM_LEVELS = 32
+# Mesafeler 1-3 px: referans ölçekte çekirdek çapı ~12-20 px; 3 px kromatin topaklarının ölçeği,
+# daha büyük mesafeler çekirdeğin dışına taşan çiftler yüzünden seyrekleşir.
+GLCM_DISTANCES = (1, 2, 3)
+# 4 açının ortalaması: veri setinde döndürülmüş kopyalar var; ortalama dönmeye duyarsızdır.
+GLCM_ANGLES_DEG = (0, 45, 90, 135)
+GLCM_PROPERTIES = ("contrast", "dissimilarity", "homogeneity", "energy", "correlation", "ASM")
+# Niceleme aralığı (L*, OpenCV 8 bit): referans ölçekte çekirdek piksellerinin %0.5-%99.5
+# yüzdelikleri 18-142. Sabit aralık: renk normalizasyonu sonrası aynı seviye her görüntüde aynı
+# koyuluk demektir (hücre başına min-max germe soluk çekirdeklerin gürültüsünü doku gibi büyütürdü).
+GLCM_GRAY_RANGE = (15, 145)
+
+# Lob sayısı: derinliği ≥ 0.15 × eritrosit çapı (referans ölçekte 1.5 px) olan dışbükeylik
+# kusurları. 1 px'lik girintiler piksel basamaklanmasıdır. Sınırlılık: 10 px ölçeğinde nötrofil
+# lobları ~3 px; ayırt edilemiyor (Healthy çekirdeklerinin %99'u tek lob çıktı).
+LOBE_DEPTH_RATIO = 0.15
+
+# Çekirdek çevresi halkası (sitoplazma renk öznitelikleri): çekirdekten 1 px boşluk (sınır
+# bulanıklığı çekirdek rengi taşır), sonra 0.2 × eritrosit çapı (2 px) genişlik. Lenfosit ve
+# blastların sitoplazması dardır; daha geniş halka çoğunlukla zemini ölçerdi (yaymalarda 0.3-0.5 d
+# halkasının medyan rengi zemine eşit çıktı). Halkada < 5 piksel kalırsa halka öznitelikleri NaN.
+RING_GAP_PX = 1
+RING_WIDTH_RATIO = 0.2
+RING_MIN_PIXELS = 5
+
+# N/C (çekirdek / hücre alanı) — META VERİ, öznitelik değil:
+# - Yalnızca yerel eritrosit çapı ≥ 25 px olan hücrelerde (pratikte yakın çekimler) hesaplanır;
+#   yaymalarda sitoplazma 1-2 px'lik bant, sınır bulanıklığından ayrılamaz.
+# - Değerin var olup olmaması görüntü tipini (ve dolayısıyla çoğunlukla ALL'ı) ele verir; bu
+#   yüzden sınıflandırmada kullanılmaz.
+# - Sitoplazma: çekirdeğe ≤ 0.5 d uzaklıkta (kırpım payı), normalize ters b* değeri zeminden
+#   ≥ 5 yüksek (mavimsi) ve çekirdeğe bağlı pikseller. 5: yaymalarda 0.3-0.5 d halkası (zemin)
+#   medyanı 2-5, yakın çekimde sitoplazma içeren iç halka 6-21.
+NC_MIN_NATIVE_RBC_DIAMETER = 25
+NC_MAX_DISTANCE_RATIO = 0.5
+CYTOPLASM_MIN_CONTRAST = 5

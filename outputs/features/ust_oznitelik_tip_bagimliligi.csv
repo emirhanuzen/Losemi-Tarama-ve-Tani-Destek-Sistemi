@@ -1,0 +1,11 @@
+oznitelik,roc_auc,dengeli_dogruluk
+renk_cekirdek_V_ort,0.671,0.632
+renk_fark_L,0.525,0.514
+renk_cekirdek_L_ort,0.461,0.455
+renk_halka_L_ort,0.565,0.544
+renk_halka_S_ort,0.745,0.69
+renk_halka_a_std,0.699,0.659
+renk_halka_b_std,0.433,0.471
+renk_cekirdek_L_std,0.736,0.693
+doku_contrast_d2,0.777,0.726
+renk_cekirdek_S_std,0.806,0.752

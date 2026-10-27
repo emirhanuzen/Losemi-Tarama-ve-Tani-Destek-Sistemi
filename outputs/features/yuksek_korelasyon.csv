@@ -1,0 +1,9 @@
+oznitelik_1,oznitelik_2,r
+doku_energy_d1,doku_energy_d2,0.9868
+doku_dissimilarity_d1,doku_dissimilarity_d2,0.9799
+doku_homogeneity_d1,doku_homogeneity_d2,0.9784
+doku_contrast_d1,doku_contrast_d2,0.9777
+doku_ASM_d1,doku_ASM_d2,0.976
+doku_dissimilarity_d2,doku_dissimilarity_d3,0.958
+doku_contrast_d2,doku_contrast_d3,0.9575
+doku_contrast_d3,doku_dissimilarity_d3,0.9551

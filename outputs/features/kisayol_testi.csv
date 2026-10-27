@@ -1,0 +1,13 @@
+olcu,kapsam,roc_auc,dengeli_dogruluk
+"Alan (ham piksel, log)",tüm hücreler,0.986,0.943
+Alan / eritrosit çapı² (log),tüm hücreler,0.46,0.511
+"Çevre (ham piksel, log)",tüm hücreler,0.963,0.922
+Çevre / eritrosit çapı (log),tüm hücreler,0.428,0.444
+GLCM contrast d1 (yerel ölçek),tüm hücreler (örnek),0.948,0.875
+GLCM contrast d1 (referans ölçek),tüm hücreler (örnek),0.57,0.601
+"Alan (ham piksel, log)",yalnızca ALL,0.998,0.978
+Alan / eritrosit çapı² (log),yalnızca ALL,0.545,0.505
+"Çevre (ham piksel, log)",yalnızca ALL,0.996,0.965
+Çevre / eritrosit çapı (log),yalnızca ALL,0.579,0.54
+GLCM contrast d1 (yerel ölçek),yalnızca ALL (örnek),0.99,0.954
+GLCM contrast d1 (referans ölçek),yalnızca ALL (örnek),0.769,0.711

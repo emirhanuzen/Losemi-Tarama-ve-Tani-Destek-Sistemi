@@ -676,7 +676,7 @@ def plot_cell_examples(cells: pd.DataFrame, per_class: int = 12) -> None:
                 continue
             cell = sample.iloc[k]
             crop = cv2.cvtColor(cv2.imdecode(np.fromfile(cell["kirpim_yolu"], np.uint8), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
-            mask = cv2.imdecode(np.fromfile(cell["maske_yolu"], np.uint8), cv2.IMREAD_GRAYSCALE) > 0
+            mask = cv2.imdecode(np.fromfile(cell["maske_yolu"], np.uint8), cv2.IMREAD_GRAYSCALE) == 255
             scale = 96 / max(crop.shape[:2])  # Kırpımlar farklı boyutta; gösterim için eşitlenir
             size = (max(1, round(crop.shape[1] * scale)), max(1, round(crop.shape[0] * scale)))
             crop = cv2.resize(crop, size, interpolation=cv2.INTER_NEAREST)
