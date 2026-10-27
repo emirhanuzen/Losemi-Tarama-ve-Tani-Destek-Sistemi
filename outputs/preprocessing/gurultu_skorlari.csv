@@ -1,0 +1,11 @@
+filtre,gurultu_orani,kenar_koruma,canny_hassasiyet,canny_duyarlilik
+Filtresiz,1.0,1.0,0.939,0.926
+Gaussian 3x3,0.652,0.941,0.967,0.914
+Gaussian 5x5,0.621,0.893,0.979,0.888
+Medyan 3x3,0.745,0.981,0.949,0.926
+Medyan 5x5,0.623,0.939,0.973,0.897
+Medyan 7x7,0.547,0.889,0.985,0.858
+Bilateral d5 σc10,0.662,0.969,0.977,0.929
+Bilateral d5 σc25,0.657,0.907,0.98,0.894
+Bilateral d7 σc15,0.582,0.917,0.989,0.9
+Bilateral d7 σc50,0.575,0.802,0.996,0.792

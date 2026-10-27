@@ -41,5 +41,8 @@ bir tanı destek sistemi (Sayısal Görüntü İşleme dersi projesi).
 ```bash
 pip install -r requirements.txt
 python -m src.dataset              # veri seti indeksi ve analizi (outputs/dataset/)
+python -m src.preprocessing_analysis  # ön işleme karşılaştırmaları (outputs/preprocessing/)
+python -m src.segmentation_analysis   # segmentasyon karşılaştırması (outputs/segmentation/)
+python -m src.segmentation            # hücre çıkarma (data/processed/cells/, cells_index.csv)
 streamlit run app/streamlit_app.py
 ```

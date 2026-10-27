@@ -38,6 +38,7 @@ from src.config import (
     CLASS_NAMES,
     DATASET_INDEX_CSV,
     DUPLICATE_PAIRS_CSV,
+    PADDING_THRESHOLD,
     RANDOM_STATE,
     RAW_DATA_DIR,
 )
@@ -48,10 +49,8 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 # Uzun döngülerde kaç görüntüde bir ilerleme yazdırılacağı
 PROGRESS_EVERY = 100
 
-# Siyah dolgu eşiği: augmentasyonla döndürülen görüntülerin köşeleri saf siyah (0,0,0)
-# ile doldurulmuş. JPEG sıkıştırması bu pikselleri 0-10 aralığına dağıttığı için 15
-# kullanılır; boyanmış kan yaymasında bu kadar koyu (her kanal < 15) gerçek doku yoktur.
-BLACK_PIXEL_THRESHOLD = 15
+# Siyah dolgu eşiği: döndürme augmentasyonunun saf siyah köşeleri (gerekçesi src/config.py içinde)
+BLACK_PIXEL_THRESHOLD = PADDING_THRESHOLD
 
 # --- Döndürmeye dayanıklı pHash ---
 # Görüntünün merkez karesi 256x256'ya ölçeklenir, 0°-350° arası 10° adımla döndürülür
