@@ -892,3 +892,225 @@ büyütme kısayolunu ortadan kaldırıyor (AUC 0.99 → 0.46), doku ölçüleri
 (0.95 → 0.57). En ayırt edici öznitelikler çekirdek parlaklığı ve çekirdek−çevre kontrastı.
 
 ---
+
+## Adım 5 — Sınıflandırma ve Değerlendirme
+
+**Ne yapıldı:**
+- `src/classifier.py` dolduruldu: kilitli veri ayrımı, 5 klasik model, katlar dışı (out-of-fold) tahmin,
+  hücre → görüntü birleştirme, metrikler ve model kaydı. `python -m src.classifier` son modeli eğitir,
+  `models/losemi_siniflandirici.joblib` (+ `.json` meta veri) olarak kaydeder ve test setinde **bir kez** değerlendirir.
+- `src/classification_analysis.py` deneyleri yalnızca geliştirme setinde yapar (`python -m src.classification_analysis
+  [modeller|segmentasyon|ablasyon|kisayol|kenar]`; hepsi ~20 dk, `n_jobs` ≤ 4).
+- Yalnızca klasik ML kullanıldı (scikit-learn); derin öğrenme yok.
+
+### 5.1 Veri ayrımı ve kilitli test seti
+
+- **Grup düzeyinde ayrım:** `StratifiedGroupKFold` (grup = `grup_id`, katman = etiket) ile görüntülerin 1/5'i
+  teste ayrıldı. Aynı kaynağın augmentasyonları (döndürme, renk, kırpma) hep aynı tarafta kalır. Sızıntı kontrolü
+  (`check_split`) her grubun tek bölümde ve tek katta olduğunu doğrular.
+- Ayrım `data/processed/veri_bolumu.csv` dosyasına **bir kez** yazıldı ve bir daha üretilmez.
+  Tüm seçimler (model, hiperparametre, öznitelik kümesi, kenar hücreleri) yalnızca geliştirme setinde yapıldı.
+
+| Bölüm | ALL | AML | Healthy | Grup (ALL / AML / Healthy) |
+|-------|----:|----:|----:|------|
+| Geliştirme | 480 görüntü | 480 | 480 | 337 / 130 / 198 |
+| Test | 120 görüntü | 120 | 120 | 84 / 33 / 50 |
+
+- Test hücreleri (K-means): ALL 539, AML 2.435, Healthy 222. Testteki yakın çekimler: ALL 60, AML **yalnızca 1** görüntü.
+- **Geliştirme CV:** geliştirme grupları 5 sabit kata bölündü (her katta sınıf başına 96 görüntü). Katlar görüntü
+  düzeyinde sabit olduğu için üç segmentasyon tablosu ve tüm deneyler aynı katları kullanır.
+
+### 5.2 Yöntemin teorisi (kısa)
+
+- **Lojistik regresyon:** sınıf olasılığını, özniteliklerin doğrusal birleşimine uygulanan softmax ile modeller; sınırları doğrusaldır.
+- **k-NN:** yeni hücreye, standartlaştırılmış öznitelik uzayında en yakın k eğitim hücresinin oyuyla karar verir.
+- **SVM (RBF):** sınıflar arasındaki marjı en büyük yapan sınırı Gauss çekirdeğiyle doğrusal olmayan bir uzayda bulur.
+  Olasılık için Platt (sigmoid) kalibrasyonu kullanıldı.
+- **Random Forest:** bootstrap örnekleri ve rastgele öznitelik alt kümeleriyle eğitilmiş çok sayıda karar ağacının oyu.
+- **Gradyan artırma (HistGradientBoosting):** küçük ağaçları sırayla ekler; her yeni ağaç öncekilerin hatasını
+  (kaybın gradyanını) düzeltir. Öznitelikleri histogram kutularına böldüğü için hızlıdır.
+- **Ortak adımlar:** medyan doldurma → standartlaştırma → model. Sınıf dengesizliği (hücrelerin %77'si AML) için
+  `class_weight="balanced"` kullanıldı (k-NN hariç; desteklemiyor).
+- **Ölçütler:** birincil ölçüt **makro F1**'dir (sınıf F1'lerinin ortalaması; çoğunluk sınıfını ödüllendirmez).
+  Ek olarak doğruluk, dengeli doğruluk (sınıf duyarlılıklarının ortalaması), sınıf bazında duyarlılık ve kesinlik,
+  karışıklık matrisi raporlandı. Risk skoru için **anormal duyarlılık** (ALL+AML hücrelerinin anormal sayılma oranı)
+  ve **Healthy özgüllüğü** de hesaplandı. Bir alt kümede bulunmayan sınıf (ör. yakın çekimde Healthy) makro ortalamaya girmez.
+- **Görüntü düzeyi:** hücre olasılıklarının ortalaması alınır; en yüksek olasılıklı sınıf görüntünün tahmini olur.
+  Görüntüde tam hücre varsa kenara değen hücreler ortalamaya girmez. Hiç hücre bulunamayan görüntü "Hücre yok"
+  olarak işaretlenir ve "tüm görüntüler" metriğinde hata sayılır.
+
+### 5.3 Model karşılaştırması
+
+[model_karsilastirma.png](../outputs/classification/model_karsilastirma.png),
+[model_karsilastirma.csv](../outputs/classification/model_karsilastirma.csv) (13 yapılandırma)
+
+Geliştirme seti, 5 katlı grup CV, K-means öznitelikleri (58), kenar hücreleri eğitime dahil. Her modelin en iyi yapılandırması:
+
+| Model | En iyi parametre | Hücre makro F1 (± kat std) | Dengeli doğruluk | Healthy duyarlılık | Görüntü makro F1 |
+|-------|------|------:|------:|------:|------:|
+| **Gradyan artırma (HGB)** | lr 0.1, 300 iterasyon | **0.924 ± 0.041** | **0.948** | 0.919 | 0.954 |
+| SVM (RBF) | C = 30 | 0.912 ± 0.041 | 0.939 | 0.905 | 0.945 |
+| Random Forest | yaprak ≥ 1 | 0.902 ± 0.041 | 0.886 | 0.762 | 0.894 |
+| k-NN | k = 15, uzaklık ağırlıklı | 0.872 ± 0.032 | 0.889 | 0.790 | 0.911 |
+| Lojistik regresyon | C = 10 | 0.863 ± 0.048 | 0.935 | 0.950 | 0.949 |
+
+- **Seçilen model: HGB (lr 0.1).**
+  - Hücre makro F1'de ve dengeli doğrulukta birinci. Görüntü düzeyinde en üst grupta (0.954; en yüksek değer
+    0.956, HGB lr 0.05).
+  - SVM ile farkı katlar arası std'den küçük. Yine de HGB'yi seçtik, çünkü ölçekleme ve kalibrasyon gerektirmeden
+    doğrudan olasılık veriyor.
+  - Erken durdurma kapalı: modelin kendi iç doğrulama bölmesi grupları gözetmiyor.
+- **Random Forest ve k-NN Healthy'yi kaçırıyor** (duyarlılık 0.76 / 0.79); çoğunluk sınıfı AML'ye kayıyorlar.
+  - k-NN sınıf ağırlığı desteklemiyor.
+  - RF'de yapraklar tek hücreye kadar inince dengeleme etkisini yitiriyor (yaprak ≥ 5 ile 0.86).
+- **Lojistik regresyon** hücre F1'de en düşük, ama Healthy duyarlılığı en yüksek. Doğrusal sınır AML hücrelerinin
+  bir kısmını Healthy'ye kaydırıyor, bu yüzden Healthy kesinliği düşük. Görüntü düzeyinde ortalama alınınca bu
+  hatalar büyük ölçüde siliniyor.
+- **Hiperparametre ızgarası bilinçli olarak küçük** tutuldu (13 yapılandırma). Çok sayıda deneme arasından en iyisini
+  seçmek CV skorunu iyimserleştirir. Bu yüzden asıl başarı ölçüsü test setidir (5.8).
+
+### 5.4 Segmentasyon karşılaştırması
+
+[segmentasyon_karsilastirma.png](../outputs/classification/segmentasyon_karsilastirma.png),
+[segmentasyon_karsilastirma.csv](../outputs/classification/segmentasyon_karsilastirma.csv)
+
+Aynı model (HGB) ve aynı katlarla üç yöntemin öznitelik tabloları karşılaştırıldı:
+
+| Yöntem | Geliştirme hücresi | Hücre makro F1 | Görüntü makro F1 (hücre bulunan) | Kapsama | Görüntü makro F1 (tüm) |
+|--------|----:|------:|------:|------:|------:|
+| K-means | 15.120 | 0.924 ± 0.041 | **0.976** | 0.956 | 0.954 |
+| Otsu | 10.854 | **0.928 ± 0.029** | 0.968 | **0.988** | 0.962 |
+| Watershed | 11.645 | 0.912 ± 0.038 | 0.969 | **0.988** | **0.963** |
+
+- Her yöntem farklı hücre kümesi ürettiği için asıl ölçüt görüntü düzeyidir.
+- **Farkın kaynağı kapsama:**
+  - K-means, geliştirme setindeki Healthy görüntülerin **54'ünde (%11)** hiç çekirdek bulamıyor; Otsu yalnızca 9'unda.
+  - İki yöntemin de hücre bulduğu 1.377 görüntüde K-means biraz önde (0.976'ya karşı 0.972).
+  - Otsu'nun fazladan bulduğu 45 Healthy görüntünün 37'si doğru sınıflandı.
+  - Healthy yaymalarında görüntü başına ortalama ~2 lökosit var. K-means (k=3) bunları kaçırırsa görüntü boş kalıyor.
+- **Karar: son modelde K-means korundu.**
+  - Farklar katlar arası std düzeyinde.
+  - Adım 3-4 analizleri K-means'e dayanıyor; hücre bulunan görüntülerde de en iyi sonucu K-means veriyor.
+  - Ancak kapsama eksikliği gerçek bir zayıflık. Adım 6'da (pipeline), K-means hücre bulamadığında Otsu'ya geri
+    dönülmesi değerlendirilmeli.
+
+### 5.5 Öznitelik ablasyonu
+
+[oznitelik_ablasyonu.png](../outputs/classification/oznitelik_ablasyonu.png),
+[oznitelik_ablasyonu.csv](../outputs/classification/oznitelik_ablasyonu.csv)
+
+| Öznitelik kümesi | Sayı | Hücre makro F1 | Healthy duyarlılık | Görüntü makro F1 |
+|------------------|----:|------:|------:|------:|
+| Tümü | 58 | **0.924** | **0.919** | **0.954** |
+| Yalnız şekil | 11 | 0.546 | 0.331 | 0.638 |
+| Yalnız renk | 28 | 0.890 | 0.869 | 0.940 |
+| Yalnız doku | 19 | 0.673 | 0.390 | 0.698 |
+| Şekil + doku (renksiz) | 30 | 0.755 | 0.573 | 0.805 |
+| Şekil + renk | 39 | 0.917 | 0.901 | 0.947 |
+| Renk + doku | 47 | 0.905 | 0.884 | 0.944 |
+| Std ve GLCM hariç | 27 | 0.857 | 0.840 | 0.926 |
+
+- **Bilginin çoğu renkte.** Yalnızca renk öznitelikleriyle F1 0.890'a ulaşıyor; renksiz model (şekil + doku) 0.755'te
+  kalıyor. Bu sonuç Adım 4'teki önem sıralamasıyla uyumlu (ilk 10 özniteliğin 9'u renk).
+- Şekil ve doku tek başına zayıf ama renge eklenince katkı sağlıyor: F1 0.890'dan 0.924'e çıkıyor.
+- **Dikkat (kaynak/boyanma şüphesi):** Renk özniteliklerinin bu kadar baskın olmasının bir nedeni, sınıfların farklı
+  laboratuvarlardan veya boyama protokollerinden gelmesi olabilir. Veri setinin klinik kaynağı belirtilmediği için bu
+  olasılık dışlanamaz. Model hücre morfolojisinin yanında "boyanma tarzını" da öğreniyor olabilir.
+- "Std ve GLCM hariç" kümesi, Adım 4'te görüntü tipini kısmen taşıdığı görülen ölçüleri çıkarır ve F1'i 0.857'ye düşürür.
+  Ancak 5.6'daki kontrol, bu ölçülerin katkısının tip kısayolundan gelmediğini gösteriyor. Bu yüzden son modelde tüm
+  öznitelikler kullanıldı.
+
+### 5.6 Kısayol kontrolü (görüntü tipi / büyütme)
+
+[kisayol_kontrolu.csv](../outputs/classification/kisayol_kontrolu.csv)
+
+- **Endişe:** Yakın çekimlerin neredeyse tamamı ALL sınıfında (Healthy'de hiç yok). Model "büyütmeyi" sınıf ipucu
+  olarak kullanabilir.
+- **1. Öznitelikler birlikte görüntü tipini ele veriyor mu? Evet.**
+  - ALL içinde (iki tip dengeli) 58 öznitelikle görüntü tipi tahmininde ROC AUC **0.973** (lojistik) / **0.984** (RF).
+  - Adım 4'te ölçekten arındırılmış öznitelikler tek tek ele alındığında tipi zayıf taşıyordu. Birlikte
+    kullanıldıklarında ise büyütme hâlâ okunabiliyor (yeniden örnekleme izleri, çözünürlük farkı).
+- **2. Model buna dayanıyor mu? Yayma görüntülerinde hayır.**
+  - Tam model, yayma hücrelerinde makro F1 **0.922**.
+  - Hiç yakın çekim görmeden eğitilen yalnız-yayma modeli, aynı yayma hücrelerinde **0.920** (görüntü F1: 0.954'e karşı 0.950).
+  - Yakın çekimleri çıkarmak yaymadaki başarıyı değiştirmiyor; model yaymada büyütme ipucuna ihtiyaç duymuyor.
+- **3. Yakın çekimlerde sonuç güvenilir mi? Kısmen.**
+  - Yakın çekim hücrelerinde makro F1 0.945 (duyarlılık ALL 0.98, AML 0.97).
+  - Ancak yakın çekimlerde Healthy hiç yok. Modelin "yakın çekim → Healthy değil" çıkarımı yapıp yapmadığı
+    **test edilemiyor**; yakın çekimlerde Healthy/lösemi ayrımı bu veriyle doğrulanamaz.
+
+### 5.7 Kenara değen hücreler deneyi
+
+[kenar_hucreleri_deneyi.png](../outputs/classification/kenar_hucreleri_deneyi.png),
+[kenar_hucreleri_deneyi.csv](../outputs/classification/kenar_hucreleri_deneyi.csv)
+
+| Eğitim | Eğitim hücresi | F1 (kenara değmeyen) | F1 (kenara değen) | Kenara değen ALL duyarlılık | Görüntü F1 (kenar ortalamadan hariç / dahil) |
+|--------|----:|------:|------:|------:|------|
+| Kenar hücreleri hariç | 11.420 | 0.920 | 0.616 | 0.715 | 0.960 / 0.952 |
+| **Kenar hücreleri dahil** | 15.120 | **0.924** | **0.719** | **0.877** | 0.954 / 0.948 |
+
+- Adım 4 kenar hücrelerini eğitimden dışlamayı önermişti; **deney bu öneriyi desteklemedi.**
+  - Kenar hücreleri eğitime dahil edilince tam hücrelerdeki başarı aynı kaldı, kesik hücrelerde ise belirgin şekilde arttı.
+  - Model, kesik şekli bir sınıf ipucu olarak öğrenip tam hücrelerde hata yapmıyor.
+- Görüntü düzeyindeki fark ~0.006; geliştirme setinde birkaç görüntüye karşılık geliyor, yani gürültü düzeyinde.
+- **Karar:**
+  - Kenar hücreleri **eğitime dahil**. Risk skoru kesik hücreleri de sayacağı için onların doğru sınıflanması önemli.
+  - Görüntü ortalamasında, görüntüde tam hücre varsa kenar hücreleri **dışlanır**; iki eğitim seçeneğinde de bu daha iyi sonuç verdi.
+  - Birincil hücre metrikleri kenara değmeyen hücreler üzerinden raporlanır.
+
+### 5.8 Son model ve kilitli test seti sonuçları
+
+Model: HGB (lr 0.1, 300 iterasyon), 58 öznitelik, K-means; geliştirme setinin 15.120 hücresinin tamamıyla eğitildi.
+[test_karisiklik_matrisleri.png](../outputs/evaluation/test_karisiklik_matrisleri.png),
+[test_metrikleri.csv](../outputs/evaluation/test_metrikleri.csv),
+[test_goruntu_tahminleri.csv](../outputs/evaluation/test_goruntu_tahminleri.csv)
+
+| Düzey | n | Doğruluk | Dengeli doğr. | Makro F1 | Duyarlılık ALL / AML / Healthy | Anormal duyarlılık | Healthy özgüllük |
+|-------|--:|------:|------:|------:|------|------:|------:|
+| Hücre (kenara değmeyen) | 2.515 | 0.981 | 0.951 | **0.958** | 0.986 / 0.991 / 0.874 | 0.996 | 0.874 |
+| Hücre (tümü) | 3.196 | 0.980 | 0.946 | 0.955 | 0.974 / 0.991 / 0.874 | 0.996 | 0.874 |
+| Görüntü (hücre bulunan) | 349 | 0.968 | 0.967 | **0.968** | 1.000 / 0.983 / 0.919 | 1.000 | 0.919 |
+| Görüntü (tümü; hücre yok = hata) | 360 | 0.939 | 0.939 | 0.952 | 0.983 / 0.983 / 0.850 | 0.992 | 0.925 |
+| Hücre, yalnız yayma | 2.454 | 0.980 | 0.950 | 0.957 | 0.984 / 0.991 / 0.874 | 0.996 | 0.874 |
+| Hücre, yalnız yakın çekim | 61 | 1.000 | 1.000 | 1.000 | 1.000 / 1.000 / — | 1.000 | — |
+
+Karışıklık matrisleri (satır gerçek, sütun tahmin):
+
+| Gerçek \ Tahmin | Hücre: ALL | Hücre: AML | Hücre: Healthy | Görüntü: ALL | Görüntü: AML | Görüntü: Healthy |
+|---|---:|---:|---:|---:|---:|---:|
+| **ALL** | 432 | 6 | 0 | 118 | 0 | 0 |
+| **AML** | 7 | 1.846 | 9 | 2 | 118 | 0 |
+| **Healthy** | 12 | 15 | 188 | 4 | 5 | 102 |
+
+- **Test sonuçları geliştirme CV'siyle tutarlı:** hücre F1 CV'de 0.924, testte 0.958; görüntü F1 CV'de 0.954, testte 0.952.
+  Test seti yalnızca bu son değerlendirmede, bir kez kullanıldı. Model seçiminden kaynaklanan belirgin bir iyimserlik görülmüyor.
+- **Lösemi hücreleri neredeyse hiç kaçırılmıyor:** anormal duyarlılık 0.996. ALL ile AML'nin karışması az (hücrelerin %1'i).
+- **Zayıf nokta Healthy:** Healthy hücrelerinin %13'ü lösemi olarak etiketleniyor.
+  - Tarama açısından bu hata yanlış alarm yönünde, yani yanlış negatiften daha az tehlikeli. Yine de sağlıklı bir
+    görüntünün riskli görünmesine yol açabilir.
+  - Yanlış sınıflanan 9 Healthy görüntünün **hepsinde yalnızca 1 hücre** var; tek hücredeki hata doğrudan görüntü
+    hatasına dönüşüyor. Risk raporunda hücre sayısı düşükse (ör. < 3) sonucun güveni düşük olarak işaretlenmeli.
+- **11 test görüntüsünde hiç hücre bulunamadı** (9 Healthy, 2 ALL). Bu, K-means'in kapsama sorunundan kaynaklanıyor (5.4).
+- Yakın çekimde test yalnızca 61 hücre ve 61 görüntüden oluşuyor (60 ALL + 1 AML). Bu alt küme küçük ve Healthy
+  içermediği için %100 sonucu anlamlı değil.
+
+### 5.9 Kısıtlar
+
+- **Veri kaynağı belirsiz:** Sınıflar farklı laboratuvar veya boyama protokollerinden geliyorsa model kısmen
+  "boyanma tarzını" öğreniyor olabilir (ablasyonda bilginin çoğu renkte çıktı). Başka bir laboratuvarın
+  görüntülerinde başarı düşebilir; model dış veriyle doğrulanmadı.
+- **Etiketler görüntü düzeyinde:** Her hücre bulunduğu görüntünün etiketini alıyor. Bu yüzden lösemi görüntüsündeki
+  normal bir lenfosit veya nötrofil de "ALL"/"AML" sayılıyor. Hücre düzeyi metrikler bu etiket gürültüsünü içeriyor.
+- **Görüntü tipleri sınıflara dengesiz dağılmış:** Healthy'de yakın çekim yok, AML'de çok az (testte 1 görüntü);
+  yakın çekimlerde Healthy ayrımı doğrulanamıyor. Öznitelikler birlikte büyütmeyi ele veriyor (AUC 0.97-0.98), ancak
+  yayma görüntülerinde model buna dayanmıyor.
+- **Kapsama:** K-means, Healthy görüntülerinin ~%11'inde çekirdek bulamıyor.
+- **Bağımsızlık:** Grup ayrımı augmentasyon kopyalarını ayırıyor. Ancak kopya tespiti (pHash + ORB) bazı kopyaları
+  kaçırdıysa test başarısı biraz iyimser olabilir.
+- Bu sistem araştırma ve eğitim amaçlı bir prototiptir; **klinik teşhis aracı değildir.**
+
+**Özet:** HGB modeli kilitli test setinde hücre düzeyinde **0.958**, görüntü düzeyinde **0.968** (hücre bulunan
+görüntüler) / **0.952** (tüm görüntüler) makro F1 verdi. Lösemi hücrelerinin %99.6'sı anormal olarak yakalandı.
+Başlıca zayıflıklar: Healthy hücrelerinin %13'ünün lösemi sayılması ve K-means'in bazı Healthy görüntülerinde hücre bulamaması.
+
+---

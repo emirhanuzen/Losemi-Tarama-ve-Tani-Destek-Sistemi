@@ -246,3 +246,37 @@ RING_MIN_PIXELS = 5
 NC_MIN_NATIVE_RBC_DIAMETER = 25
 NC_MAX_DISTANCE_RATIO = 0.5
 CYTOPLASM_MIN_CONTRAST = 5
+
+# ---------------------------------------------------------------------------
+# Sınıflandırma parametreleri (gerekçeler: docs/sunum_notlari.md — Adım 5,
+# deneyler: python -m src.classification_analysis, son model + test: python -m src.classifier)
+# ---------------------------------------------------------------------------
+# Kilitli veri ayrımı: grup düzeyinde geliştirme / test ve geliştirme içi CV katları.
+# Bir kez üretilir, sonra hiç değiştirilmez (classifier.load_split).
+SPLIT_CSV = PROCESSED_DATA_DIR / "veri_bolumu.csv"
+# Test oranı 1/5 (%20): 832 grubun ~166'sı test. AML'de yalnızca 163 farklı grup var; %20 test
+# ~33 AML grubu bırakır (yakın çekimli birkaç grup dahil). Daha küçük test sınıf başı metrikleri
+# oynak yapar, daha büyüğü geliştirme setini (model seçimi) zayıflatır.
+TEST_FRACTION_FOLDS = 5
+# Geliştirme setinde 5 katlı grup CV (StratifiedGroupKFold): her katta ~%20 grup doğrulama.
+CV_FOLDS = 5
+# Paralel iş sayısı üst sınırı (bellek ve makine yükü için)
+N_JOBS = 4
+# Son model: gradyan artırma (HistGradientBoosting), öğrenme oranı 0.1, 300 iterasyon.
+# Geliştirme CV'sinde 13 yapılandırma içinde hücre makro F1 (0.924, katlar arası std 0.041) ve dengeli
+# doğrulukta (0.948) birinci; görüntü makro F1 0.954 (en iyi 0.956, HGB lr 0.05). İkinci SVM (C=30):
+# 0.912 / 0.939 / 0.945. Fark katlar arası std'den küçük; ama HGB hem hücre hem görüntü düzeyinde en üst
+# grupta, ölçek/kalibrasyon gerektirmez ve doğal olasılık verir. Erken durdurma kapalı: iç doğrulama
+# bölmesi grup gözetmez (augmentasyon kopyaları iki tarafa düşerdi).
+CLASSIFIER_MODEL = "hgb"
+CLASSIFIER_PARAMS = {"learning_rate": 0.1, "max_iter": 300, "early_stopping": False}
+CLASSIFIER_FEATURE_SET = "tumu"
+# Kenara değen (kesik) hücreler EĞİTİME DAHİL. Adım 4 dışlamayı önermişti (kesik şekiller sınıfa göre
+# farklı bozuluyor); kenar deneyi (geliştirme CV) bunu desteklemedi: dahil edilince kenara değmeyen
+# hücrelerde makro F1 değişmedi (0.920 → 0.924), kenara değen hücrelerde 0.616 → 0.719 arttı (ALL
+# duyarlılığı 0.72 → 0.88). Risk skoru (Adım 6) kesik hücreleri de saydığı için bu önemli.
+CLASSIFIER_TRAIN_EDGE_CELLS = True
+# Değerlendirme ve görüntü düzeyi birleştirme: kenara değen hücreler, görüntüde tam hücre varsa
+# olasılık ortalamasına girmez (görüntü F1 0.954'e karşı dahil edilince 0.948); birincil hücre
+# metrikleri kenara değmeyen hücrelerde raporlanır (kesik şekil sınıflandırmayı zorlaştırıyor).
+IMAGE_EXCLUDE_EDGE_CELLS = True

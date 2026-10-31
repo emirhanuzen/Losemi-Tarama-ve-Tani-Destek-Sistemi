@@ -1,0 +1,3 @@
+egitim,egitim_hucre,hucre_f1_kenara_degmeyen,hucre_f1_kenara_degen,kenara_degen_duyarlilik_ALL,kenara_degen_duyarlilik_AML,kenara_degen_duyarlilik_Healthy,goruntu_f1_kenar_ortalamadan_haric,goruntu_f1_kenar_ortalamaya_dahil
+kenar hücreleri hariç,11420,0.9204667081376919,0.616490919054312,0.7145748987854251,0.881979695431472,0.6481481481481481,0.959693698261889,0.9518768260223022
+kenar hücreleri dahil,15120,0.9237974258788322,0.7190394303636216,0.8765182186234818,0.9133883248730964,0.7222222222222222,0.9538090531979387,0.9481636640216443
