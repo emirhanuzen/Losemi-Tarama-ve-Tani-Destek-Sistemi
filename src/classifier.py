@@ -50,19 +50,24 @@ from src.config import (
     DATASET_INDEX_CSV,
     IMAGE_EXCLUDE_EDGE_CELLS,
     FEATURES_CSVS,
+    MODEL_FILES,
     MODELS_DIR,
     N_JOBS,
     RANDOM_STATE,
+    RESULT_SUFFIXES,
     SEGMENTATION_METHOD,
     SPLIT_CSV,
+    SPLIT_CSVS,
+    SPLIT_GROUP_COLUMNS,
+    SPLIT_VERSION,
     TEST_FRACTION_FOLDS,
 )
 from src.dataset import SURFACE, TEXT_PRIMARY, TEXT_SECONDARY
-from src.features import feature_columns
-from src.utils import save_figure, stage_dir
+from src.utils import feature_columns, save_figure, stage_dir
 
 NO_CELL = "Hücre yok"   # Hiç çekirdek bulunamayan görüntünün görüntü düzeyi "tahmini"
-MODEL_FILE = "losemi_siniflandirici"
+MODEL_FILE = MODEL_FILES[SPLIT_VERSION]   # Etkin ayrımın son modeli (v2: sızıntısız kaynak grupları)
+SUFFIX = RESULT_SUFFIXES[SPLIT_VERSION]   # Çıktı dosyası soneki (v1 sonuçlarının üzerine yazılmaz)
 
 # Model adları (sunum ve tablolar için) → oluşturucu. Parametre ızgaraları classification_analysis'te.
 MODEL_NAMES = {
@@ -107,50 +112,63 @@ def make_split(index: pd.DataFrame) -> pd.DataFrame:
     return split
 
 
-def load_split() -> pd.DataFrame:
+def load_split(version: str = SPLIT_VERSION) -> pd.DataFrame:
     """
-    Kilitli veri ayrımını okur; dosya yoksa bir kez oluşturup kaydeder.
+    Kilitli veri ayrımını okur; v1 dosyası yoksa bir kez oluşturup kaydeder.
 
     Dosya varsa ASLA yeniden üretilmez: test seti bir kez belirlenir ve tüm deneylerde aynı kalır.
+    v2 ayrımı (kaynak_grup_id) yalnızca src/source_groups.py tarafından, ALL-IDB eşleşmeleriyle üretilir.
+
+    Parametreler:
+        version: "v1" (veri_bolumu.csv, grup_id) veya "v2" (veri_bolumu_v2.csv, kaynak_grup_id).
 
     Döndürür:
-        make_split çıktısı biçiminde tablo.
+        dosya_yolu, etiket, grup_id, tip, bolum, kat (+ v2'de kaynak_grup_id, kaynak) tablosu.
     """
-    if SPLIT_CSV.exists():
-        return pd.read_csv(SPLIT_CSV)
+    path = SPLIT_CSVS[version]
+    if path.exists():
+        return pd.read_csv(path)
+    if version != "v1":
+        raise FileNotFoundError(f"{path.name} yok; önce python -m src.source_groups çalıştırın.")
     split = make_split(pd.read_csv(DATASET_INDEX_CSV))
     split.to_csv(SPLIT_CSV, index=False, encoding="utf-8")
     return split
 
 
-def check_split(split: pd.DataFrame) -> None:
+def check_split(split: pd.DataFrame, version: str = SPLIT_VERSION) -> None:
     """
     Veri ayrımında grup sızıntısı olmadığını doğrular (her grup tek bölümde ve tek katta).
 
+    v2'de hem kaynak_grup_id hem (onun alt kümesi olan) grup_id kontrol edilir.
+
     Parametreler:
         split: load_split çıktısı.
+        version: Ayrım sürümü (kontrol edilecek grup sütunu SPLIT_GROUP_COLUMNS'tan).
     """
-    per_group = split.groupby("grup_id")[["bolum", "kat"]].nunique()
-    if (per_group > 1).any().any():
-        raise ValueError("Veri ayrımında sızıntı: bir grup birden fazla bölüme/kata düşmüş.")
+    for col in dict.fromkeys([SPLIT_GROUP_COLUMNS[version], "grup_id"]):
+        per_group = split.groupby(col)[["bolum", "kat"]].nunique()
+        if (per_group > 1).any().any():
+            raise ValueError(f"Veri ayrımında sızıntı: bir {col} birden fazla bölüme/kata düşmüş.")
 
 
-def load_cells(method: str = SEGMENTATION_METHOD) -> pd.DataFrame:
+def load_cells(method: str = SEGMENTATION_METHOD, version: str = SPLIT_VERSION) -> pd.DataFrame:
     """
-    Bir segmentasyon yönteminin öznitelik tablosunu okuyup bölüm/kat bilgisini ekler.
+    Bir segmentasyon yönteminin öznitelik tablosunu okuyup bölüm/kat (v2'de kaynak) bilgisini ekler.
 
-    Bölüm ve kat grup_id üzerinden eşlenir (grup tek bölümde olduğu için birebir).
+    Bölüm ve kat hücrenin kaynak görüntüsü (meta_kaynak_dosya) üzerinden eşlenir; bu, hem grup_id hem
+    kaynak_grup_id tabanlı ayrımda birebir doğrudur.
 
     Parametreler:
         method: "kmeans", "otsu" veya "watershed".
+        version: Ayrım sürümü.
 
     Döndürür:
-        Öznitelik tablosu + bolum, kat sütunları.
+        Öznitelik tablosu + bolum, kat (v2: + kaynak_grup_id, kaynak) sütunları.
     """
     cells = pd.read_csv(FEATURES_CSVS[method])
-    split = load_split()
-    group_map = split.drop_duplicates("grup_id").set_index("grup_id")[["bolum", "kat"]]
-    return cells.join(group_map, on="grup_id")
+    split = load_split(version)
+    cols = [c for c in ("bolum", "kat", "kaynak_grup_id", "kaynak") if c in split]
+    return cells.join(split.set_index("dosya_yolu")[cols], on="meta_kaynak_dosya")
 
 
 def select_features(columns: list[str], feature_set: str) -> list[str]:
@@ -573,11 +591,13 @@ def plot_test_results(cell_metrics: dict, img_metrics: dict, per_type: pd.DataFr
                    f"Hücre düzeyi (n={cell_metrics['n']}, makro F1 {cell_metrics['makro_f1']:.2f})")
     draw_confusion(axes[1], img_metrics["karisiklik"], CLASS_NAMES,
                    f"Görüntü düzeyi (n={img_metrics['n']}, makro F1 {img_metrics['makro_f1']:.2f})")
-    fig.suptitle("Kilitli test seti", color=TEXT_PRIMARY, fontsize=11)
+    fig.suptitle(f"Kilitli test seti ({SPLIT_VERSION})", color=TEXT_PRIMARY, fontsize=11)
     fig.tight_layout()
-    save_figure(fig, "evaluation", "test_karisiklik_matrisleri")
-    plot_confusion_matrix(cell_metrics["karisiklik"], CLASS_NAMES, "test_karisiklik_hucre", "Test — hücre düzeyi")
-    plot_confusion_matrix(img_metrics["karisiklik"], CLASS_NAMES, "test_karisiklik_goruntu", "Test — görüntü düzeyi")
+    save_figure(fig, "evaluation", f"test_karisiklik_matrisleri{SUFFIX}")
+    plot_confusion_matrix(cell_metrics["karisiklik"], CLASS_NAMES, f"test_karisiklik_hucre{SUFFIX}",
+                          "Test — hücre düzeyi")
+    plot_confusion_matrix(img_metrics["karisiklik"], CLASS_NAMES, f"test_karisiklik_goruntu{SUFFIX}",
+                          "Test — görüntü düzeyi")
 
 
 def main() -> None:
@@ -586,6 +606,7 @@ def main() -> None:
     out_dir = stage_dir("evaluation")
     split = load_split()
     check_split(split)
+    print(f"Veri ayrımı: {SPLIT_VERSION} ({SPLIT_CSVS[SPLIT_VERSION].name}, grup: {SPLIT_GROUP_COLUMNS[SPLIT_VERSION]})")
     cells = load_cells(SEGMENTATION_METHOD)
     columns = select_features(feature_columns(cells), CLASSIFIER_FEATURE_SET)
     dev = cells[cells["bolum"] == "gelistirme"]
@@ -602,6 +623,7 @@ def main() -> None:
         "model": CLASSIFIER_MODEL, "parametreler": CLASSIFIER_PARAMS, "oznitelikler": columns,
         "siniflar": CLASS_NAMES, "segmentasyon": SEGMENTATION_METHOD, "oznitelik_kumesi": CLASSIFIER_FEATURE_SET,
         "kenar_hucreleri_egitimde": CLASSIFIER_TRAIN_EDGE_CELLS, "egitim_hucre_sayisi": int(len(train)),
+        "veri_ayrimi": SPLIT_VERSION, "veri_ayrimi_dosyasi": SPLIT_CSVS[SPLIT_VERSION].name,
     })
 
     test_images = split[split["bolum"] == "test"]
@@ -611,7 +633,7 @@ def main() -> None:
     cell_m = label_metrics(y_cell[inner], pred_cell[inner])
     cell_all = label_metrics(y_cell, pred_cell)
     img = aggregate_images(test, proba, test_images)
-    img.to_csv(out_dir / "test_goruntu_tahminleri.csv", index=False, encoding="utf-8")
+    img.to_csv(out_dir / f"test_goruntu_tahminleri{SUFFIX}.csv", index=False, encoding="utf-8")
     covered = img[img["tahmin"] != NO_CELL]
     img_m = label_metrics(covered["etiket"].to_numpy(), covered["tahmin"].to_numpy())
     img_all = label_metrics(img["etiket"].to_numpy(), img["tahmin"].to_numpy())
@@ -631,7 +653,7 @@ def main() -> None:
             m = label_metrics(covered.loc[isel, "etiket"].to_numpy(), covered.loc[isel, "tahmin"].to_numpy())
             per_type.append({"duzey": f"goruntu ({tip})", **{k: v for k, v in m.items() if k != "karisiklik"}})
     table = pd.DataFrame(rows + per_type)
-    table.to_csv(out_dir / "test_metrikleri.csv", index=False, encoding="utf-8")
+    table.to_csv(out_dir / f"test_metrikleri{SUFFIX}.csv", index=False, encoding="utf-8")
     plot_test_results(cell_m, img_m, pd.DataFrame(per_type))
 
     cols = ["duzey", "n", "dogruluk", "dengeli_dogruluk", "makro_f1"] + [f"duyarlilik_{c}" for c in CLASS_NAMES] \

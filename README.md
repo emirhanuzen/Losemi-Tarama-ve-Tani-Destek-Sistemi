@@ -6,11 +6,14 @@ bir tarama ve tanı destek sistemi. Sistem yalnızca klasik görüntü işleme v
 yöntemleriyle çalışır; derin öğrenme kullanılmaz. Her aşamada alternatif yöntemler ölçülerek karşılaştırılmış,
 seçimler sayısal gerekçelere dayandırılmıştır.
 
-| Öne çıkan sonuç (kilitli test seti) | Değer |
+| Öne çıkan sonuç (sızıntısız kilitli test seti) | Değer |
 |---|---:|
-| Görüntü düzeyi makro F1 | **0.968** |
-| Lösemi hücresi (ALL + AML) duyarlılığı | **%99.6** |
-| Hücre düzeyi makro F1 | 0.958 |
+| Görüntü düzeyi makro F1 (hücre bulunan / tüm görüntüler) | **0.985** / 0.967 |
+| Lösemi hücresi (ALL + AML) duyarlılığı | **%98.2** |
+| Hücre düzeyi makro F1 | 0.949 |
+
+*Test seti, aynı ALL-IDB kaynak yaymasından türeyen görüntüler tek grupta toplanarak ayrıldı
+([sızıntı tespiti ve düzeltme](#sızıntı-tespiti-ve-düzeltme)).*
 
 > [!WARNING]
 > **Bu sistem araştırma ve eğitim amaçlı bir prototiptir; klinik teşhis aracı değildir.**
@@ -93,7 +96,9 @@ kaggle datasets download -d sheikhlubna/leukemia-types --unzip -p indirilen/
 ```
 
 > **Kısıt:** Veri setinin klinik kaynağı (hastane, mikroskop, boyama protokolü, hasta sayısı) belirtilmemiştir.
-> Görüntülerin bağımsız hastalardan gelip gelmediği doğrulanamaz.
+> Görüntülerin bağımsız hastalardan gelip gelmediği doğrulanamaz. Karşılaştırma sonucunda ALL görüntülerinin %47'si
+> ve normal görüntülerin %56'sı açık ALL-IDB veri setinden (ALL-IDB1 yaymaları, ALL-IDB2 hücre kırpımları) türetilmiş
+> çıktı. AML'nin hiçbir görüntüsü ALL-IDB'de bulunamadı.
 
 ## Yöntem
 
@@ -181,11 +186,13 @@ Kısayol testinde, tek bir ölçüyle görüntü tipini tahmin eden bir model ku
 
 ### 4. Sınıflandırma
 
-- **Grup bazlı ayrım.** Görüntüler `StratifiedGroupKFold` ile ayrıldı (grup = `grup_id`). Aynı kaynağın
-  augmentasyonları hiçbir zaman hem eğitimde hem testte bulunmaz.
-- **Kilitli test seti.** Görüntülerin %20'si (sınıf başına 120 görüntü, toplam 360) bir kez ayrılıp dosyaya yazıldı.
+- **Kaynak bazlı ayrım.** Görüntüler `StratifiedGroupKFold` ile ayrıldı (grup = `kaynak_grup_id`). Bu grup, Adım 1'in
+  kopya gruplarını aynı ALL-IDB yaymasına bağlanan tüm türevlerle birleştirir: tam boy, 256x256'ya sıkıştırılmış ve
+  kırpılmış hâller ile o yaymadan kesilmiş hücre kırpımları. Aynı kaynağın türevleri hiçbir zaman hem eğitimde hem
+  testte bulunmaz. Kod bunu her çalıştırmada doğrular.
+- **Kilitli test seti.** Görüntülerin %20'si (361 görüntü) bir kez ayrılıp dosyaya yazıldı (`veri_bolumu_v2.csv`).
   - Model, hiperparametre, öznitelik kümesi ve segmentasyon seçimlerinin tamamı yalnızca geliştirme setinde
-    (1 440 görüntü), 5 katlı grup çapraz doğrulamayla yapıldı.
+    (1 439 görüntü), 5 katlı grup çapraz doğrulamayla yapıldı.
   - Test seti yalnızca son değerlendirmede, bir kez kullanıldı.
 - **Modeller.** Yalnızca klasik makine öğrenmesi (scikit-learn) kullanıldı: lojistik regresyon, k-NN, SVM (RBF),
   Random Forest ve gradyan artırma (HistGradientBoosting).
@@ -198,17 +205,17 @@ Kısayol testinde, tek bir ölçüyle görüntü tipini tahmin eden bir model ku
 
 ### Model karşılaştırması
 
-Geliştirme seti, 5 katlı grup çapraz doğrulama. Tabloda her modelin en iyi yapılandırması var:
+Geliştirme seti, 5 katlı kaynak grubu çapraz doğrulaması. Tabloda her modelin en iyi yapılandırması var:
 
 | Model | En iyi parametre | Hücre makro F1 (± kat std) | Dengeli doğruluk | Normal duyarlılığı | Görüntü makro F1 |
 |---|---|---:|---:|---:|---:|
-| **Gradyan artırma (HGB)** | lr 0.1, 300 iterasyon | **0.924 ± 0.041** | **0.948** | 0.919 | **0.954** |
-| SVM (RBF) | C = 30 | 0.912 ± 0.041 | 0.939 | 0.905 | 0.945 |
-| Random Forest | yaprak ≥ 1 | 0.902 ± 0.041 | 0.886 | 0.762 | 0.894 |
-| k-NN | k = 15 | 0.872 ± 0.032 | 0.889 | 0.790 | 0.911 |
-| Lojistik regresyon | C = 10 | 0.863 ± 0.048 | 0.935 | 0.950 | 0.949 |
+| **Gradyan artırma (HGB)** | lr 0.1, 300 iterasyon | **0.903 ± 0.089** | **0.937** | 0.915 | **0.952** |
+| Random Forest | yaprak ≥ 1 | 0.889 ± 0.054 | 0.886 | 0.782 | 0.901 |
+| SVM (RBF) | C = 30 | 0.887 ± 0.106 | 0.933 | 0.920 | 0.947 |
+| k-NN | k = 5 | 0.867 ± 0.088 | 0.909 | 0.860 | 0.932 |
+| Lojistik regresyon | C = 10 | 0.845 ± 0.089 | 0.925 | 0.937 | 0.941 |
 
-![Model karşılaştırması](outputs/classification/model_karsilastirma.png)
+![Model karşılaştırması](outputs/classification/model_karsilastirma_v2.png)
 *Her modelin en iyi yapılandırması; hata çubukları hücre makro F1'in katlar arası standart sapması.*
 
 Seçilen model gradyan artırma (HGB). SVM ile farkı katlar arası sapmadan küçük, ama HGB hem hücre hem görüntü
@@ -218,22 +225,48 @@ düzeyinde en üst grupta. Random Forest ve k-NN, normal hücreleri çoğunluk s
 
 | Düzey | n | Doğruluk | Makro F1 | Duyarlılık ALL | Duyarlılık AML | Duyarlılık Normal |
 |---|---:|---:|---:|---:|---:|---:|
-| Hücre (kenara değmeyen) | 2 515 | 0.981 | **0.958** | 0.986 | 0.991 | 0.874 |
-| Hücre (tümü) | 3 196 | 0.980 | 0.955 | 0.974 | 0.991 | 0.874 |
-| Görüntü (hücre bulunan) | 349 | 0.968 | **0.968** | 1.000 | 0.983 | 0.919 |
-| Görüntü (tümü; hücre bulunamayan = hata) | 360 | 0.939 | 0.952 | 0.983 | 0.983 | 0.850 |
+| Hücre (kenara değmeyen) | 2 666 | 0.974 | **0.949** | 0.980 | 0.974 | 0.961 |
+| Hücre (tümü) | 3 587 | 0.966 | 0.927 | 0.960 | 0.970 | 0.935 |
+| Görüntü (hücre bulunan) | 348 | 0.986 | **0.985** | 1.000 | 0.992 | 0.963 |
+| Görüntü (tümü; hücre bulunamayan = hata) | 361 | 0.950 | 0.967 | 0.983 | 0.992 | 0.875 |
 
-- Lösemi hücrelerinin %99.6'sı anormal olarak işaretlendi. ALL ile AML'nin birbirine karışması hücrelerin yaklaşık %1'inde görüldü.
-- Test sonuçları geliştirme setindeki çapraz doğrulamayla tutarlı: hücre makro F1 0.924 → 0.958, görüntü (tümü) 0.954 → 0.952.
-- Başlıca zayıflık normal hücreler: %13'ü lösemi olarak etiketlendi. Yanlış sınıflanan 9 normal görüntünün
-  hepsinde yalnızca 1 hücre vardı.
+- Lösemi hücrelerinin %98.2'si anormal olarak işaretlendi. Hücre bulunan 348 görüntüden yalnızca 5'i yanlış
+  sınıflandı: 4 normal → AML (her birinde 1-2 hücre) ve 1 AML → normal.
+- Geliştirme CV'siyle tutarlı: hücre makro F1 0.903 → 0.949, görüntü (tümü) 0.952 → 0.967. Test seti küçük
+  (sınıf başına ~120 görüntü); ±0.02'lik farklar gürültü düzeyinde.
+- 13 test görüntüsünde (11 normal) hiç hücre bulunamadı; K-means'in kapsama sorunu sürüyor.
 
-![Test seti karışıklık matrisleri](outputs/evaluation/test_karisiklik_matrisleri.png)
+![Test seti karışıklık matrisleri](outputs/evaluation/test_karisiklik_matrisleri_v2.png)
 *Kilitli test setinde hücre ve görüntü düzeyi karışıklık matrisleri (satır gerçek sınıf, sütun tahmin; hücrelerde sayı ve satır yüzdesi).*
+
+### Sızıntı tespiti ve düzeltme
+
+İlk kilitli test seti Adım 1'in kopya gruplarına (`grup_id`) göre ayrılmıştı. Kaggle görüntüleri ALL-IDB ile
+karşılaştırıldığında, aynı ALL-IDB1 yaymasının bazı türevlerinin farklı gruplara düştüğü görüldü. Bu türevler en-boy
+oranı bozularak 256x256'ya sıkıştırılmış hâller, kırpımlar ve o yaymadan kesilmiş hücre kırpımlarıydı. Bu yüzden eski
+test setindeki ALL görüntülerinin 44/120'sinin, normal görüntülerin 63/120'sinin kaynağı eğitimde de vardı.
+
+| Değerlendirme | Hücre makro F1 | Görüntü makro F1 (hücre bulunan) | Görüntü makro F1 (tümü) |
+|---|---:|---:|---:|
+| Eski model, eski test (tümü, sızıntılı) | 0.958 | 0.968 | 0.952 |
+| Eski model, eski testin yalnız sızıntısız görüntüleri | 0.959 | 0.974 | 0.958 |
+| **Yeni model, yeni sızıntısız test** | **0.949** | **0.985** | **0.967** |
+
+![Sızıntı düzeltmesi: eski ve yeni sonuçlar](outputs/evaluation/sizinti_karsilastirma.png)
+*Eski ve yeni test sonuçları ile iki ayrımın geliştirme CV'si (HGB).*
+
+- Sızıntı eski test skorunu ölçülebilir biçimde şişirmemiş. Yine de ayrım kaynak gruplarıyla yeniden kuruldu ve model
+  yeniden eğitildi. Seçilen model değişmedi.
+- Geliştirme CV'si hücre düzeyinde 0.924'ten 0.903'e indi; eski CV katları da aynı sızıntıyı taşıyordu.
+- **Kaynak kısayolu.** Öznitelikler, görüntünün ALL-IDB kaynaklı olup olmadığını sınıf içinde kısmen ele veriyor
+  (grup bazlı CV, ROC AUC 0.68-0.85). Ancak model ALL ve normal hücreleri iki kaynakta da aynı düzeyde ayırıyor
+  (CV, görüntü doğruluğu: ALL %99 / %98, normal %95 / %94; ALL-IDB / kaynağı bilinmeyen). ALL-IDB'nin kendi içinde iki
+  sınıf da bulunduğu için bu ayrım kaynaktan gelemez.
 
 ### Segmentasyon yönteminin sınıflandırmaya etkisi
 
-Aynı model ve aynı çapraz doğrulama katlarıyla üç segmentasyon yönteminin öznitelikleri karşılaştırıldı:
+Aynı model ve aynı çapraz doğrulama katlarıyla üç segmentasyon yönteminin öznitelikleri karşılaştırıldı (ilk ayrımla,
+`grup_id`; bu deney yeni ayrımla tekrarlanmadı):
 
 | Yöntem | Hücre makro F1 | Görüntü makro F1 (hücre bulunan) | Kapsama | Görüntü makro F1 (tümü) |
 |---|---:|---:|---:|---:|
@@ -252,17 +285,19 @@ K-means korundu.
 
 | Öznitelik kümesi | Sayı | Hücre makro F1 | Görüntü makro F1 |
 |---|---:|---:|---:|
-| Tümü | 58 | **0.924** | **0.954** |
-| Yalnız şekil | 11 | 0.546 | 0.638 |
-| Yalnız renk | 28 | 0.890 | 0.940 |
-| Yalnız doku | 19 | 0.673 | 0.698 |
-| Şekil + doku (renksiz) | 30 | 0.755 | 0.805 |
+| Tümü | 58 | **0.903** | 0.952 |
+| Yalnız şekil | 11 | 0.526 | 0.605 |
+| Yalnız renk | 28 | 0.876 | 0.941 |
+| Yalnız doku | 19 | 0.663 | 0.712 |
+| Şekil + doku (renksiz) | 30 | 0.732 | 0.784 |
+| Şekil + renk | 39 | 0.905 | **0.953** |
 
-![Öznitelik ablasyonu](outputs/classification/oznitelik_ablasyonu.png)
-*Seçilen modelin farklı öznitelik gruplarıyla geliştirme setindeki başarısı (birleşimler dahil).*
+![Öznitelik ablasyonu](outputs/classification/oznitelik_ablasyonu_v2.png)
+*Seçilen modelin farklı öznitelik gruplarıyla geliştirme setindeki başarısı (birleşimler dahil, kaynak gruplu ayrım).*
 
 Bilginin çoğu renk özniteliklerinde. Şekil ve doku tek başına zayıf, ama renge eklendiklerinde başarıyı
-0.890'dan 0.924'e çıkarıyor. Renk baskınlığı kısmen biyolojik farklardan kaynaklanabilir: ALL çekirdekleri
+0.876'dan 0.903'e çıkarıyor. "Şekil + renk" ile "Tümü" arasındaki fark katlar arası sapmanın çok altında olduğu için
+58 özniteliğin tamamı korundu. Renk baskınlığı kısmen biyolojik farklardan kaynaklanabilir: ALL çekirdekleri
 belirgin şekilde daha koyu. Ancak sınıfların farklı laboratuvar ya da boyama protokollerinden gelmesinden de
 kaynaklanıyor olabilir; bu ihtimal dışlanamaz.
 
@@ -280,7 +315,10 @@ karşı 0.922). Yani model yayma görüntülerinde büyütme ipucuna dayanmıyor
 - **Görüntü düzeyi etiketler.** Her hücre, bulunduğu görüntünün etiketini alıyor. Bir lösemi görüntüsündeki normal
   lenfosit de "ALL"/"AML" sayılıyor, dolayısıyla hücre düzeyi metrikler etiket gürültüsü içeriyor.
 - **Dış doğrulama yok.** Sonuçlar aynı veri setinden ayrılmış bir test setine ait; başka bir laboratuvarın
-  görüntülerinde başarı düşebilir.
+  görüntülerinde başarı düşebilir. AML'nin tamamı ALL-IDB dışı bir kaynaktan geliyor. Kaynağı bilinmeyen ALL ve
+  normal görüntüler AML'ye biraz daha sık kayıyor (CV'de %2-6'ya karşı %0.4-4); dış veride bu etki büyüyebilir.
+- **Kalan sızıntı ölçülemez.** "Kaynağı bilinmiyor" ALL-IDB'de bulunamadı demektir. Kaynak tespitinin ve kopya
+  tespitinin kaçırdığı türevler hâlâ farklı gruplarda olabilir.
 - **Görüntü tipi dağılımı.** Normal sınıfta yakın çekim yok, AML'de çok az (test setinde 1 görüntü). Yakın çekimlerde
   normal / lösemi ayrımı bu veriyle doğrulanamıyor.
 - **Segmentasyon kapsaması.** K-means, normal görüntülerin bir kısmında hiç çekirdek bulamıyor.
@@ -315,8 +353,11 @@ python -m src.segmentation             # hücre çıkarma, seçilen yöntem (dat
 python -m src.segmentation --hepsi     # üç yöntemle hücre çıkarma (karşılaştırma için)
 python -m src.features                 # öznitelik tabloları (data/processed/features_<yöntem>.csv)
 python -m src.features_analysis        # kısayol testi, öznitelik önemi (outputs/features/)
+python -m src.allidb_overlap --allidb-dir <dizin>  # Kaggle ↔ ALL-IDB eşleşmesi (ALL-IDB ayrıca indirilir)
+python -m src.source_groups            # kaynak grupları + sızıntısız kilitli ayrım (data/processed/veri_bolumu_v2.csv)
 python -m src.classification_analysis  # model/segmentasyon karşılaştırması, ablasyon, kısayol (outputs/classification/)
 python -m src.classifier               # son model (models/) ve kilitli test seti değerlendirmesi (outputs/evaluation/)
+python -m src.leakage_analysis         # eski modelin temiz değerlendirmesi, kaynak kısayolu testi, karşılaştırma
 ```
 
 > **Geliştirme aşamasında:** Risk skoru, PDF rapor (`src/risk_report.py`), uçtan uca pipeline (`src/pipeline.py`)
@@ -348,6 +389,9 @@ python -m src.classifier               # son model (models/) ve kilitli test set
 │   ├── features_analysis.py     Kısayol testi, öznitelik önemi, korelasyon
 │   ├── classifier.py            Veri ayrımı, modeller, değerlendirme, son model ve test
 │   ├── classification_analysis.py Model/segmentasyon karşılaştırması, ablasyon, kısayol, kenar deneyleri
+│   ├── allidb_overlap.py        Kaggle ↔ ALL-IDB kaynak tespiti
+│   ├── source_groups.py         Kaynak grupları (kaynak_grup_id) ve sızıntısız kilitli ayrım
+│   ├── leakage_analysis.py      Eski modelin temiz değerlendirmesi, kaynak kısayolu testi
 │   ├── risk_report.py           Risk skoru ve PDF rapor (geliştirme aşamasında)
 │   └── pipeline.py              Uçtan uca pipeline (geliştirme aşamasında)
 └── requirements.txt

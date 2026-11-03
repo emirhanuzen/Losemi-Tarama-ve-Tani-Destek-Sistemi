@@ -22,6 +22,7 @@ STAGE_OUTPUT_DIRS = {
     "features": OUTPUTS_DIR / "features",
     "classification": OUTPUTS_DIR / "classification",
     "evaluation": OUTPUTS_DIR / "evaluation",
+    "risk": OUTPUTS_DIR / "risk",
 }
 
 # Sınıflandırma hedefi: 3 sınıf. Klasör adları data/raw/<sınıf>/ ile birebir aynıdır.
@@ -254,6 +255,18 @@ CYTOPLASM_MIN_CONTRAST = 5
 # Kilitli veri ayrımı: grup düzeyinde geliştirme / test ve geliştirme içi CV katları.
 # Bir kez üretilir, sonra hiç değiştirilmez (classifier.load_split).
 SPLIT_CSV = PROCESSED_DATA_DIR / "veri_bolumu.csv"
+# v2 (sızıntı düzeltmesi, src/source_groups.py): ALL-IDB kaynak tespiti, eski ayrımda aynı ALL-IDB1 yaymasının
+# türevlerinin (tam / sıkıştırılmış / kırpım / ALL-IDB2 hücre kırpımı) iki tarafa düştüğünü gösterdi. v2 ayrımı
+# kaynak_grup_id'ye (Adım 1 grupları + ALL-IDB eşleşmeleriyle birleştirilmiş gruplar) göre yapılır, o da kilitlidir.
+# Eski ayrım (v1) silinmez; eski modelin değerlendirmesi ve karşılaştırma için kalır.
+SPLIT_CSV_V2 = PROCESSED_DATA_DIR / "veri_bolumu_v2.csv"
+SPLIT_CSVS = {"v1": SPLIT_CSV, "v2": SPLIT_CSV_V2}
+SPLIT_GROUP_COLUMNS = {"v1": "grup_id", "v2": "kaynak_grup_id"}
+# Etkin ayrım: tüm deneyler, son model ve risk analizi bunu kullanır.
+SPLIT_VERSION = "v2"
+# Sürüme göre model dosyası ve çıktı dosyası soneki (v1 çıktılarının üzerine yazılmasın)
+MODEL_FILES = {"v1": "losemi_siniflandirici", "v2": "losemi_siniflandirici_v2"}
+RESULT_SUFFIXES = {"v1": "", "v2": "_v2"}
 # Test oranı 1/5 (%20): 832 grubun ~166'sı test. AML'de yalnızca 163 farklı grup var; %20 test
 # ~33 AML grubu bırakır (yakın çekimli birkaç grup dahil). Daha küçük test sınıf başı metrikleri
 # oynak yapar, daha büyüğü geliştirme setini (model seçimi) zayıflatır.
@@ -268,6 +281,10 @@ N_JOBS = 4
 # 0.912 / 0.939 / 0.945. Fark katlar arası std'den küçük; ama HGB hem hücre hem görüntü düzeyinde en üst
 # grupta, ölçek/kalibrasyon gerektirmez ve doğal olasılık verir. Erken durdurma kapalı: iç doğrulama
 # bölmesi grup gözetmez (augmentasyon kopyaları iki tarafa düşerdi).
+# v2 ayrımıyla (sızıntısız kaynak grupları) karşılaştırma yeniden yapıldı, seçim değişmedi: HGB lr 0.1 hücre makro F1
+# 0.903 (kat std 0.089) ile yine birinci (HGB lr 0.05: 0.901, RF yaprak 1: 0.889, SVM C=30: 0.887); görüntü makro F1
+# 0.952 (HGB lr 0.05 ile eşit, en yüksek). Ablasyonda "şekil + renk" 0.905, tümü 0.903: fark kat std'nin çok altında,
+# öznitelik kümesi değiştirilmedi. Model: models/losemi_siniflandirici_v2.joblib.
 CLASSIFIER_MODEL = "hgb"
 CLASSIFIER_PARAMS = {"learning_rate": 0.1, "max_iter": 300, "early_stopping": False}
 CLASSIFIER_FEATURE_SET = "tumu"
@@ -280,3 +297,53 @@ CLASSIFIER_TRAIN_EDGE_CELLS = True
 # olasılık ortalamasına girmez (görüntü F1 0.954'e karşı dahil edilince 0.948); birincil hücre
 # metrikleri kenara değmeyen hücrelerde raporlanır (kesik şekil sınıflandırmayı zorlaştırıyor).
 IMAGE_EXCLUDE_EDGE_CELLS = True
+
+# ---------------------------------------------------------------------------
+# Uçtan uca pipeline, risk skoru ve PDF rapor (gerekçeler: docs/sunum_notlari.md — Adım 6,
+# analiz: python -m src.risk_analysis, tek görüntü: python -m src.pipeline --goruntu <yol> --pdf)
+# ---------------------------------------------------------------------------
+# Otsu geri dönüşü: K-means bir görüntüde hiç çekirdek bulamazsa aynı görüntüde Otsu denenir.
+# K-means, çekirdeği çok az ve soluk Healthy yaymalarında kümeyi zemine/eritrosite harcayıp boş
+# kalabiliyor (testte 11 görüntü hücresiz: 9 Healthy). Adım 5 karşılaştırmasında Otsu'nun kapsaması
+# daha yüksekti; tek eşik, tek bir çekirdek bile zeminden ayrışıyorsa onu yakalar. Model yeniden
+# eğitilmez (K-means hücreleriyle eğitildi); geri dönüş yalnızca çıkarımda uygulanır ve sonuçta
+# hangi yöntemin kullanıldığı yazılır (düşük güven nedeni sayılır).
+SEGMENTATION_FALLBACK_METHOD = "otsu"
+
+# Risk skoru: anormal (ALL + AML) olarak sınıflanan hücrelerin oranı. Kenara değen (kesik) hücreler
+# DAHİL: model onlarla da eğitildi (Adım 5.7) ve Healthy görüntülerinde 1-2 hücre olduğundan bir
+# hücreyi atmak skoru belirsiz bırakır. Çoğu kenara değiyorsa güven bayrağı kalkar (aşağıda).
+# Yumuşak skor: 1 − ortalama P(Healthy) = ortalama P(ALL) + P(AML); raporda ek bilgi olarak verilir.
+RISK_INCLUDE_EDGE_CELLS = True
+
+# Risk seviyesi eşikleri (Düşük < RISK_THRESHOLDS[0] ≤ Orta < RISK_THRESHOLDS[1] ≤ Yüksek).
+# Geliştirme setinin katlar dışı (out-of-fold) görüntü düzeyi skorlarından, iki hedefle seçildi
+# (src.risk_analysis.select_thresholds; aday eşikler komşu skor değerlerinin orta noktaları):
+# - Düşük/Orta eşiği: lösemi (ALL+AML) görüntülerinin en az %RISK_TARGET_SENSITIVITY'i "Düşük"
+#   DIŞINDA kalacak en büyük eşik. Tarama aracında lösemiyi "düşük risk" demek en pahalı hatadır.
+# - Orta/Yüksek eşiği: Healthy görüntülerinin en az %RISK_TARGET_SPECIFICITY'i "Yüksek" DIŞINDA
+#   kalacak en küçük eşik. "Yüksek" denilen görüntü gerçekten şüpheli olmalı (yanlış alarm sınırlı).
+# Değerler geliştirme setinde hesaplanıp buraya sabitlendi; test seti eşik seçiminde kullanılmadı.
+RISK_TARGET_SENSITIVITY = 0.98
+RISK_TARGET_SPECIFICITY = 0.95
+RISK_THRESHOLDS = (None, None)  # python -m src.risk_analysis ile belirlenir
+RISK_LEVELS = ["Düşük", "Orta", "Yüksek"]
+RISK_NO_CELL_LEVEL = "Değerlendirilemedi"  # Geri dönüşle de hiç hücre bulunamazsa
+
+# Güven bayrağı ("düşük güven") koşulları:
+# - Hücre sayısı < 3: Adım 5'te yanlış sınıflanan 9 Healthy test görüntüsünün hepsinde tek hücre
+#   vardı; 1-2 hücrede tek bir hücre hatası skoru 0'dan 0.5-1'e taşır. 3 hücrede tek hata skoru
+#   en fazla 0.33 değiştirir.
+# - Geri dönüş kullanıldı: model Otsu kırpımlarıyla eğitilmedi (sınır ve boyut dağılımı farklı).
+# - Hücrelerin yarısından fazlası kenara değiyor: kesik hücrelerde makro F1 0.72'ye karşı
+#   tam hücrelerde 0.92 (Adım 5.7); skorun çoğu daha güvenilmez tahminlerden gelir.
+LOW_CONFIDENCE_MIN_CELLS = 3
+LOW_CONFIDENCE_EDGE_FRACTION = 0.5
+
+# PDF rapor
+EXAMPLE_REPORTS_DIR = REPORTS_DIR / "ornekler"
+REPORT_MAX_CELL_ROWS = 30      # Hücre tablosu bir sayfaya sığsın; kalanlar sınıf sayılarıyla özetlenir
+# Kontur görselinin uzun kenarı (px): A4'te ~8 cm genişliğe 250 dpi civarı, dosya boyutu küçük kalır
+REPORT_IMAGE_MAX_SIDE = 800
+REPORT_DISCLAIMER = ("Bu rapor araştırma ve eğitim amaçlı bir prototip tarafından üretilmiştir. "
+                     "Klinik teşhis için kullanılamaz; kesin tanı uzman hekim tarafından konmalıdır.")

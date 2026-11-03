@@ -1113,4 +1113,354 @@ Karışıklık matrisleri (satır gerçek, sütun tahmin):
 görüntüler) / **0.952** (tüm görüntüler) makro F1 verdi. Lösemi hücrelerinin %99.6'sı anormal olarak yakalandı.
 Başlıca zayıflıklar: Healthy hücrelerinin %13'ünün lösemi sayılması ve K-means'in bazı Healthy görüntülerinde hücre bulamaması.
 
+> **Not:** 5.1-5.9'daki sonuçlar eski (v1) veri ayrımına aittir. Bu ayrımda ALL-IDB kaynaklı bir sızıntı bulundu;
+> düzeltme ve yeni sonuçlar 5.10'dadır. Eski sonuçlar karşılaştırma için olduğu gibi bırakıldı.
+
+### 5.10 Sızıntı tespiti ve düzeltme
+
+**Kod:** `src/source_groups.py` (kaynak grupları ve yeni ayrım), `src/leakage_analysis.py` (eski modelin temiz
+değerlendirmesi, kaynak kısayolu testi, karşılaştırma). Çalıştırma sırası:
+`python -m src.source_groups` → `python -m src.classification_analysis modeller ablasyon` → `python -m src.classifier`
+→ `python -m src.leakage_analysis`.
+
+#### 5.10.1 Sızıntı nasıl bulundu?
+
+- Veri setinin klinik kaynağı belirtilmemişti. Bazı görüntü boyutları ALL-IDB'yi işaret ediyordu (2592x1944,
+  1712x1368, 257x257). Bu yüzden Kaggle görüntüleri ALL-IDB1 ve ALL-IDB2 ile karşılaştırıldı (ayrıntı: aşağıdaki
+  "Veri Seti Kaynağı Tespiti" bölümü).
+- Eşleşmeler Kaggle gruplarıyla birleştirildiğinde, aynı ALL-IDB1 yaymasının türevlerinin eski ayrımda **hem geliştirme
+  hem test** tarafında bulunduğu görüldü:
+  - Eski test setindeki ALL görüntülerinin **44/120**'si, Healthy görüntülerinin **63/120**'si "sızıntılı" çıktı.
+    Bu görüntülerin kaynak yayması (veya o yaymanın başka bir türevi) eski modelin eğitiminde vardı.
+  - AML'de sızıntı yok (0/120): AML'nin hiçbir görüntüsü ALL-IDB'den gelmiyor.
+
+#### 5.10.2 Nedeni
+
+Adım 1'in kopya tespiti (pHash adayı + ORB/RANSAC) aynı kaynağın bazı türevlerini birbirine bağlayamadı:
+- **En-boy oranı bozulmuş küçültmeler:** 4:3 ALL-IDB1 yaymaları 256x256'ya sıkıştırılmış. ORB'un benzerlik dönüşümü
+  bu bozulmayı modelleyemediği için tam boy hâl ile sıkıştırılmış hâl yalnızca 20-25 inlier'le eşleşti ve kabul eşiğinin
+  altında kaldı.
+- **Kırpımlar:** yaymanın küçük bir parçası, tam yaymanın pHash'ine benzemez; aday listesine hiç girmedi.
+- **Ölçek atlayan türevler:** bir yaymadan kesilmiş ALL-IDB2 hücre kırpımları (yakın çekim) ile yaymanın kendisi farklı
+  büyütmede. Adım 1 iki görüntüyü yalnızca benzer görünüyorlarsa karşılaştırabiliyordu.
+
+Sonuçta aynı yaymanın türevleri **farklı `grup_id`**'ler aldı. Grup bazlı ayrım her grubu tek tarafta tuttu, ama aynı
+yaymanın farklı grupları iki tarafa düşebildi.
+
+#### 5.10.3 Düzeltme: kaynak grupları
+
+- Kaggle görüntüleri ve ALL-IDB1 yaymaları üzerine bir grafik kuruldu:
+  - **Düğümler:** Kaggle görüntüleri ve ALL-IDB1 yaymaları. ALL-IDB1'in kendi içindeki kopyaları (Im093_0 ↔ Im108_0)
+    tek düğüm sayıldı.
+  - **Kenarlar:** aynı `grup_id` (Adım 1) ve kabul edilmiş her ALL-IDB eşleşmesi. Tam, sıkıştırılmış, kırpım ve
+    çekirdek kırpımı eşleşmeleri o yaymaya bağlandı. ALL-IDB2 kırpımları ise kaynak ALL-IDB1 yaymalarına bağlandı.
+  - Tek başına şablon taraması sonucu (kabul = False) kenar olarak kullanılmadı.
+- Bağlantılı bileşenler **`kaynak_grup_id`** oldu. Eski `grup_id` silinmedi. Her kaynak grubu bir veya daha fazla
+  Adım 1 grubunun birleşimi. İki sütun da `dataset_index.csv`'ye eklendi.
+- Her görüntüye **`kaynak`** sütunu eklendi: bileşeninde ALL-IDB düğümü varsa `ALL-IDB`, yoksa `bilinmiyor`.
+
+| | Değer |
+|---|---:|
+| Adım 1 grubu → kaynak grubu | 832 → **695** |
+| Birden fazla Adım 1 grubunu birleştiren kaynak grubu | 57 (toplam 194 Adım 1 grubu) |
+| En büyük kaynak grubu | 53 görüntü (ALL; örtüşen Im009/010/011_1 yaymaları ve türevleri) |
+| ALL-IDB kaynaklı görüntü (ALL / AML / Healthy) | 282 / 0 / 334 |
+
+- Bileşenlerin neredeyse hepsi tek bir ALL-IDB1 yaymasına karşılık geliyor. Tek istisna, örtüşen görüş alanları
+  (Im009-011_1). Bu yaymaların ortak ALL-IDB2 kırpımları var.
+
+#### 5.10.4 Yeni ayrım (`veri_bolumu_v2.csv`)
+
+- `StratifiedGroupKFold` kullanıldı: grup = `kaynak_grup_id`, katman = etiket × kaynak. Test oranı (1/5) ve kat
+  sayısı (5) eski ayrımla aynı. Eski `veri_bolumu.csv` olduğu gibi duruyor.
+- **Test katının seçimi:** İlk dış katta ALL-IDB kaynaklı ALL'ın 56 test görüntüsü yalnızca **2** kaynak grubundan
+  geliyordu (biri 53 görüntülük bileşen). O alt kümedeki başarı fiilen tek yaymanın başarısı olurdu.
+  - Bu yüzden 5 dış kattan, katmanlardaki en küçük kaynak grubu sayısı en yüksek olan seçildi (eşitlikte toplam grup
+    sayısı belirledi).
+  - Seçimde yalnızca grup yapısına bakıldı, hiçbir model sonucu kullanılmadı. Bu yüzden test başarısını
+    iyimserleştirmez.
+  - Seçilen katta her ALL-IDB alt kümesi 7 kaynak grubundan geliyor.
+- **Doğrulama (kodla, `verify_split_v2`):** Hiçbir `kaynak_grup_id`, hiçbir `grup_id` ve hiçbir ALL-IDB1 yayması
+  iki bölüme düşmüyor. Her grup tek bir katta. `classifier.check_split` aynı kontrolü her çalıştırmada tekrarlar.
+
+| Bölüm | Sınıf | ALL-IDB görüntü (kaynak grubu) | Kaynağı bilinmeyen görüntü (kaynak grubu) | Hücre |
+|---|---|---:|---:|---:|
+| Geliştirme | ALL | 225 (23) | 254 (234) | 2.324 |
+| Geliştirme | AML | — | 480 (130) | 11.441 |
+| Geliştirme | Healthy | 267 (33) | 213 (134) | 964 |
+| Test | ALL | 57 (7) | 64 (60) | 756 |
+| Test | AML | — | 120 (33) | 2.617 |
+| Test | Healthy | 67 (7) | 53 (34) | 214 |
+
+- Testteki yakın çekimler: ALL 40, AML 3, Healthy 0 görüntü.
+
+#### 5.10.5 Eski modelin temiz değerlendirmesi (şeffaflık)
+
+Eski kayıtlı model (`models/losemi_siniflandirici.joblib`) **yeniden eğitilmeden**, eski test setinin tamamında ve
+yalnızca sızıntısız görüntülerinde değerlendirildi. Sızıntısız görüntü, kaynak grubu eski geliştirme setinde hiç
+bulunmayan görüntüdür.
+[sizinti_eski_model_temiz_test.csv](../outputs/evaluation/sizinti_eski_model_temiz_test.csv)
+
+| Eski test alt kümesi | Görüntü (ALL / AML / Healthy) | Hücre makro F1 | Görüntü makro F1 (hücre bulunan) | Görüntü makro F1 (tümü) | Healthy duyarlılık (hücre / görüntü) |
+|---|---|---:|---:|---:|---|
+| Tümü (sızıntılı; 5.8'de raporlanan) | 360 (120 / 120 / 120) | 0.958 | 0.968 | 0.952 | 0.874 / 0.919 |
+| **Yalnız sızıntısız** | 253 (76 / 120 / 57) | **0.959** | **0.974** | **0.958** | 0.916 / 0.925 |
+| Yalnız sızıntılı | 107 (44 / 0 / 63) | — | — | — | 0.842 / 0.914 |
+
+- **Sızıntı eski test skorunu ölçülebilir biçimde şişirmemiş.** Sızıntısız alt kümedeki sonuçlar tümüyle aynı düzeyde,
+  hatta biraz daha yüksek.
+- Sızıntılı görüntülerde ALL duyarlılığı 1.000 (görüntü), Healthy duyarlılığı 0.914. Bu alt küme daha kolay değil.
+  Aynı yaymanın türevleri ağır augmentasyon içeriyor (renk, döndürme, kırpma, 256x256'ya sıkıştırma). Bir türevi
+  eğitimde görmek, diğerini ezberlemeye yetmemiş görünüyor.
+- Sızıntılı alt kümede makro F1 verilmedi. Bu alt kümede AML yok; AML olarak yanlış tahmin edilen birkaç görüntü
+  F1 = 0 ile ortalamaya girip skoru anlamsız biçimde düşürüyor (0.63).
+- Yine de bu sonuç sızıntının zararsız olduğunu kanıtlamaz; yalnızca bu test setinde etkisinin küçük olduğunu gösterir.
+  Doğru yaklaşım, ayrımı sızıntısız kurmaktır (5.10.6).
+
+#### 5.10.6 Yeni ayrımla yeniden eğitim
+
+**Model karşılaştırması** (v2 geliştirme seti, 5 katlı kaynak grubu CV, aynı 13 yapılandırma):
+[model_karsilastirma_v2.png](../outputs/classification/model_karsilastirma_v2.png),
+[model_karsilastirma_v2.csv](../outputs/classification/model_karsilastirma_v2.csv)
+
+| Model | En iyi parametre | Hücre makro F1 v1 → **v2** (± kat std) | Dengeli doğruluk v2 | Healthy duyarlılık v2 | Görüntü makro F1 v1 → **v2** |
+|-------|------|------|------:|------:|------|
+| **Gradyan artırma (HGB)** | lr 0.1, 300 iterasyon | 0.924 → **0.903 ± 0.089** | **0.937** | 0.915 | 0.954 → **0.952** |
+| Random Forest | yaprak ≥ 1 | 0.902 → 0.889 ± 0.054 | 0.886 | 0.782 | 0.894 → 0.901 |
+| SVM (RBF) | C = 30 | 0.912 → 0.887 ± 0.106 | 0.933 | 0.920 | 0.945 → 0.947 |
+| k-NN | v2: k = 5 (v1: k = 15) | 0.872 → 0.867 ± 0.088 | 0.909 | 0.860 | 0.911 → 0.932 |
+| Lojistik regresyon | C = 10 | 0.863 → 0.845 ± 0.089 | 0.925 | 0.937 | 0.949 → 0.941 |
+
+- **Seçilen model değişmedi: HGB (lr 0.1).** Hücre makro F1'de ve dengeli doğrulukta yine birinci. Görüntü makro F1'de
+  HGB lr 0.05 ile eşit, en yüksek değer (0.952).
+- **Hücre düzeyi CV skorları v2'de 0.01-0.025 düştü.** Eski CV katları da `grup_id`'ye göre kurulmuştu. Bu yüzden
+  aynı ALL-IDB yaymasının türevleri katlar arasında da bölünüyordu, yani eski CV hafif iyimserdi. Görüntü düzeyinde
+  fark yok denecek kadar küçük.
+- **Katlar arası std 0.041'den 0.089'a çıktı.** Büyük kaynak grupları (en büyüğü 53 görüntü) katları
+  dengesizleştiriyor: kat 0'da ALL 103 görüntü, diğerlerinde 93-95.
+
+**Öznitelik ablasyonu** (HGB, v2):
+[oznitelik_ablasyonu_v2.png](../outputs/classification/oznitelik_ablasyonu_v2.png),
+[oznitelik_ablasyonu_v2.csv](../outputs/classification/oznitelik_ablasyonu_v2.csv)
+
+| Öznitelik kümesi | Sayı | Hücre makro F1 v1 → **v2** | Healthy duyarlılık v2 | Görüntü makro F1 v1 → **v2** |
+|---|---:|---|---:|---|
+| Tümü | 58 | 0.924 → **0.903** | 0.915 | 0.954 → **0.952** |
+| Yalnız şekil | 11 | 0.546 → 0.526 | 0.346 | 0.638 → 0.605 |
+| Yalnız renk | 28 | 0.890 → 0.876 | 0.870 | 0.940 → 0.941 |
+| Yalnız doku | 19 | 0.673 → 0.663 | 0.410 | 0.698 → 0.712 |
+| Şekil + doku (renksiz) | 30 | 0.755 → 0.732 | 0.540 | 0.805 → 0.784 |
+| Şekil + renk | 39 | 0.917 → 0.905 | 0.916 | 0.947 → 0.953 |
+| Renk + doku | 47 | 0.905 → 0.895 | 0.902 | 0.944 → 0.944 |
+| Std ve GLCM hariç | 27 | 0.857 → 0.837 | 0.840 | 0.926 → 0.921 |
+
+- Sıralama v1 ile aynı: bilginin çoğu renkte, şekil ve doku renge eklendiğinde katkı sağlıyor.
+- "Şekil + renk" (0.905) ile "Tümü" (0.903) arasındaki fark, katlar arası std'nin (≈ 0.09) çok altında. Öznitelik kümesi
+  değiştirilmedi; yeni bir seçim yapmak yalnızca CV gürültüsüne uyum olurdu.
+
+**Son model ve yeni kilitli test** (`models/losemi_siniflandirici_v2.joblib`; geliştirme setinin 14.729 hücresiyle
+eğitildi, test **bir kez** kullanıldı; eski model dosyası silinmedi):
+[test_karisiklik_matrisleri_v2.png](../outputs/evaluation/test_karisiklik_matrisleri_v2.png),
+[test_metrikleri_v2.csv](../outputs/evaluation/test_metrikleri_v2.csv),
+[test_goruntu_tahminleri_v2.csv](../outputs/evaluation/test_goruntu_tahminleri_v2.csv)
+
+| Düzey | n | Doğruluk | Dengeli doğr. | Makro F1 | Duyarlılık ALL / AML / Healthy | Anormal duyarlılık | Healthy özgüllük |
+|-------|--:|------:|------:|------:|------|------:|------:|
+| Hücre (kenara değmeyen) | 2.666 | 0.974 | 0.972 | **0.949** | 0.980 / 0.974 / 0.961 | 0.982 | 0.961 |
+| Hücre (tümü) | 3.587 | 0.966 | 0.955 | 0.927 | 0.960 / 0.970 / 0.935 | 0.982 | 0.935 |
+| Görüntü (hücre bulunan) | 348 | 0.986 | 0.985 | **0.985** | 1.000 / 0.992 / 0.963 | 0.996 | 0.963 |
+| Görüntü (tümü; hücre yok = hata) | 361 | 0.950 | 0.950 | 0.967 | 0.983 / 0.992 / 0.875 | 0.988 | 0.967 |
+| Hücre, yalnız yakın çekim | 44 | 0.977 | 0.875 | 0.922 | 1.000 / 0.750 / — | 1.000 | — |
+
+Karışıklık matrisleri (satır gerçek, sütun tahmin):
+
+| Gerçek \ Tahmin | Hücre: ALL | Hücre: AML | Hücre: Healthy | Görüntü: ALL | Görüntü: AML | Görüntü: Healthy |
+|---|---:|---:|---:|---:|---:|---:|
+| **ALL** | 575 | 9 | 3 | 119 | 0 | 0 |
+| **AML** | 7 | 1.828 | 41 | 0 | 119 | 1 |
+| **Healthy** | 1 | 7 | 195 | 0 | 4 | 105 |
+
+- Yanlış sınıflanan 5 görüntü var: 4 Healthy → AML (hepsinde 1-2 hücre) ve 1 AML → Healthy (27 hücre).
+- 13 test görüntüsünde hiç hücre bulunamadı (11 Healthy, 2 ALL). K-means kapsama sorunu sürüyor.
+- Yeni test, eski testten **farklı görüntüler** içeriyor. Sızıntısız olsa da küçük bir set (sınıf başına ~120 görüntü,
+  ALL-IDB alt kümeleri 7'şer kaynak grubu). Eski testle aradaki ±0.01-0.02'lik farklar bu boyutta gürültü düzeyinde.
+  Bu yüzden "yeni model daha iyi" değil, "sızıntısız ayrımda da başarı aynı düzeyde" diye okunmalı.
+
+**Eski ve yeni sonuçlar yan yana** (HGB; makro F1):
+[sizinti_karsilastirma.png](../outputs/evaluation/sizinti_karsilastirma.png),
+[sizinti_karsilastirma.csv](../outputs/evaluation/sizinti_karsilastirma.csv)
+
+| Değerlendirme | Ayrım | Hücre (kenara değmeyen) | Görüntü (hücre bulunan) | Görüntü (tümü) | Healthy duyarlılık (hücre) |
+|---|---|---:|---:|---:|---:|
+| Eski test, tümü (sızıntılı) | v1 | 0.958 | 0.968 | 0.952 | 0.874 |
+| Eski test, yalnız sızıntısız | v1 | 0.959 | 0.974 | 0.958 | 0.916 |
+| **Yeni kilitli test** | **v2** | **0.949** | **0.985** | **0.967** | **0.961** |
+| Geliştirme CV | v1 | 0.924 | 0.976 | 0.954 | 0.919 |
+| Geliştirme CV | v2 | 0.903 | 0.974 | 0.952 | 0.915 |
+
+#### 5.10.7 Kaynak kısayolu testi
+
+**Soru:** ALL-IDB kaynaklı görüntüler yalnızca ALL ve Healthy'de var, AML'de hiç yok. Model sınıf yerine "kaynağı"
+(mikroskop, kamera, boyama, JPEG) öğreniyor olabilir mi?
+
+**(a) Öznitelikler kaynağı ele veriyor mu?** v2 geliştirme setinde, sınıf içinde, 58 öznitelikle "ALL-IDB mi?"
+tahmini yapıldı. Katlar `kaynak_grup_id` ile 5 katlı grup CV olarak kuruldu, test kullanılmadı. Tahmin sınıf içinde
+yapıldı, çünkü sınıflar karışık olsaydı kaynak tahmini sınıf tahminine dönüşürdü (AML'de ALL-IDB yok).
+[kaynak_kisayolu_auc.csv](../outputs/classification/kaynak_kisayolu_auc.csv)
+
+| Alt küme | Hücre | Hücre bulunan görüntü (ALL-IDB) | Kaynak grubu | Lojistik AUC (hücre / görüntü) | HGB AUC (hücre / görüntü) |
+|---|---:|---:|---:|---|---|
+| ALL, tümü | 2.324 | 475 (224) | 255 | 0.733 / 0.711 | 0.764 / 0.817 |
+| ALL, yalnız yayma | 2.033 | 225 (132) | 98 | 0.786 / 0.804 | 0.742 / 0.774 |
+| ALL, yalnız yakın çekim | 291 | 250 (92) | 163 | 0.786 / 0.796 | 0.841 / 0.849 |
+| Healthy, tümü | 964 | 428 (233) | 153 | 0.704 / 0.746 | 0.682 / 0.728 |
+
+- **Kısmen veriyor.** AUC 0.68-0.85 arasında: öznitelikler kaynağı rastgeleden (0.5) iyi, ama kusursuz olmaktan uzak
+  tahmin ediyor. Karşılaştırma için, görüntü tipi (büyütme) aynı özniteliklerle AUC 0.97-0.98 ile okunuyordu (5.6).
+- Bu beklenen bir durum: farklı mikroskop ve kameradan gelen görüntülerin renk ve doku istatistikleri bir miktar farklı
+  olur. Renk normalizasyonu bu farkı azaltıyor ama tamamen silmiyor.
+
+**(b) Sınıflandırıcı kaynağa dayanıyor mu?** ALL ve Healthy'de, ALL-IDB kaynaklı ve kaynağı bilinmeyen görüntülerde
+başarı ayrı ayrı ölçüldü. Ölçüm hem v2 geliştirme CV'sinde (katlar dışı tahmin, daha çok kaynak grubu) hem de v2
+kilitli testinde (kayıtlı v2 modeli) yapıldı.
+[kaynaga_gore_basari_v2.csv](../outputs/evaluation/kaynaga_gore_basari_v2.csv)
+
+| Sınıf | Kaynak | CV: görüntü (grup) | CV: hücre doğruluk | CV: görüntü doğruluk (hücre bulunan) | CV: AML'ye kayan görüntü | Test: görüntü (grup) | Test: hücre doğruluk | Test: görüntü doğruluk (hücre bulunan) |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| ALL | ALL-IDB | 225 (23) | 0.947 | 0.991 | 1 / 224 | 57 (7) | 0.975 | 1.000 |
+| ALL | bilinmiyor | 254 (234) | 0.955 | 0.976 | 5 / 251 | 64 (60) | 0.987 | 1.000 |
+| Healthy | ALL-IDB | 267 (33) | 0.907 | 0.953 | 9 / 233 | 67 (7) | 0.974 | 0.966 |
+| Healthy | bilinmiyor | 213 (134) | 0.926 | 0.944 | 11 / 195 | 53 (34) | 0.944 | 0.960 |
+
+- **Model ALL ve Healthy'yi iki kaynakta da aynı düzeyde ayırıyor.** Farklar 0.01-0.03 ve yön tutarsız: hücrede
+  bilinmeyen kaynak biraz önde, görüntüde ALL-IDB biraz önde.
+- **ALL-IDB'nin kendi içinde iki sınıf da var** (ALL `_1`, sağlıklı `_0`). Kaynak tek başına ALL ile Healthy'yi
+  ayıramaz. Model ALL-IDB görüntülerinde de ALL'ı %99, Healthy'yi %95 doğrulukla ayırıyor (CV, görüntü). Bu ayrım
+  kaynaktan değil, hücre içeriğinden geliyor.
+- **Kalan küçük işaret:** Kaynağı bilinmeyen ALL ve Healthy görüntüleri AML'ye biraz daha sık kayıyor (CV: ALL %2.0'ye
+  karşı %0.4, Healthy %5.6'ya karşı %3.9). AML'nin tamamı "bilinmiyor" olduğu için bu, zayıf bir "ALL-IDB görünümü →
+  AML değil" ipucuna uyuyor. Ancak hata sayıları küçük (1-11 görüntü). Etkisi sınırlı, ama dış veride bu kayma büyüyebilir.
+- Healthy ALL-IDB görüntülerinin 34/267'sinde (%13) hiç hücre bulunamadı; kaynağı bilinmeyenlerde 18/213 (%8.5). K-means
+  kapsama sorunu büyük, soluk ALL-IDB1 sağlıklı yaymalarında yoğunlaşıyor.
+
+#### 5.10.8 Sonuç ve kalan kısıtlar
+
+- **Sızıntı gerçekti:** eski test setinde ALL'ın %37'si, Healthy'nin %53'ü sızıntılıydı. Ancak eski testin
+  sızıntısız alt kümesinde başarı değişmedi (görüntü makro F1 0.952 → 0.958).
+- **Düzeltilmiş ayrımda** seçim değişmedi (HGB, 58 öznitelik). Yeni kilitli testte hücre makro F1 **0.949**, görüntü
+  makro F1 **0.985** (hücre bulunan) / **0.967** (tümü) elde edildi. Lösemi hücrelerinin %98.2'si anormal olarak
+  yakalandı. Geliştirme CV'si hücre düzeyinde 0.924'ten 0.903'e indi: eski CV'nin hafif iyimser olduğunu gösteriyor.
+- **Kaynak kısayolu:** öznitelikler kaynağı kısmen taşıyor (AUC 0.68-0.85). Ancak sınıflandırıcının ALL/Healthy
+  ayrımı iki kaynakta da aynı düzeyde.
+- **Kısıtlar:**
+  - `bilinmiyor`, ALL-IDB'de **bulunamadı** demektir. Bu görüntülerin hepsi farklı kaynaklardan gelmiyor olabilir;
+    yöntemin bulamadığı ağır augmentasyonlu ALL-IDB türevleri de olabilir.
+  - Kaynağı bilinmeyen gruplar arasında da Adım 1'in kaçırdığı kopyalar kalmış olabilir. Bu türden kalan sızıntı
+    ölçülemez.
+  - ALL-IDB kaynaklı test alt kümeleri yalnızca 7'şer kaynak grubundan (yayma) geliyor; o satırlardaki sonuçlar oynak.
+  - Dış doğrulama hâlâ yapılmadı. Eğitimde hiç görülmemiş ALL-IDB görüntüleri (35 ALL-IDB1 yayması, 86 ALL-IDB2
+    kırpımı; aşağıdaki bölüm) bunun için aday. Ancak yalnızca ALL ↔ sağlıklı ayrımını sınayabilir.
+- Risk skoru ve eşik analizi (Adım 6) artık v2 ayrımını ve `losemi_siniflandirici_v2` modelini kullanıyor
+  (`config.SPLIT_VERSION = "v2"`).
+
+---
+
+## Veri Seti Kaynağı Tespiti (ALL-IDB örtüşmesi)
+
+**Ne yapıldı:**
+- Kaggle veri setinin klinik kaynağı belirtilmemişti. Görüntü boyutları ALL-IDB'yi işaret ediyordu:
+  Kaggle Healthy'de 65 adet 2592x1944, ALL'da 49 adet 1712x1368 ve 37 adet 257x257 görüntü var. Bunlar ALL-IDB1 ve
+  ALL-IDB2'nin özgün boyutları.
+- Kaggle görüntüleri ALL-IDB1 (108 tam yayma: 49 ALL `_1`, 59 sağlıklı `_0`) ve ALL-IDB2 (260 tek hücre kırpımı:
+  130 `_1`, 130 `_0`) ile karşılaştırıldı. Hiçbir dosya silinmedi ya da değiştirilmedi.
+- ALL-IDB lisans gereği repoya girmez. Eşleşme listesi `data/processed/allidb_eslesme.csv`, ALL-IDB görüntü durumu
+  `data/processed/allidb_goruntu_durumu.csv`, örnek figür `data/processed/allidb_eslesme_ornekleri.png` altında
+  (üçü de `.gitignore` kapsamında).
+- Kod: `src/allidb_overlap.py`. Çalıştırma:
+  `python -m src.allidb_overlap --allidb-dir <ALL_IDB1 ve ALL_IDB2'yi içeren dizin>`. Kayıtlı sonuçlardan yalnızca
+  rapor almak için `--rapor` eklenir.
+
+**Yöntem (Adım 1'deki kopya tespitinin genişletilmiş hâli):**
+1. **Tam görüntü:** döndürmeye ve aynalamaya dayanıklı pHash adayları (≤ 14) ile ORB/RANSAC doğrulaması. Kabul kuralı
+   Adım 1 ile aynı. ALL-IDB1 iki geometride karşılaştırıldı:
+   - en-boy oranı korunmuş,
+   - **256x256 kareye sıkıştırılmış.** Pilotta Kaggle'ın 256x256 yaymalarının 4:3 ALL-IDB1 görüntülerinin en-boy
+     oranı bozularak küçültülmüş hâlleri olduğu görüldü. Benzerlik dönüşümü bu bozulmayı modelleyemediği için
+     görüntüler ilk denemede yalnızca 20-25 inlier'le eşleşiyordu.
+2. **Tek hücre:** yakın çekimler ALL-IDB2 kırpımlarıyla ve ALL-IDB1'den çıkarılan 770 çekirdek merkezli 257x257
+   kırpımla karşılaştırıldı: pHash adayı, ardından geniş bağlamlı NCC (72 döndürme/ayna varyantı × 5 ölçek).
+   - Merkez 180 px şablon, çekirdeğin çevresindeki eritrosit düzenini de içeriyor; bu düzen hücreye özgü bir parmak izi.
+   - Yalnızca çekirdeği kapsayan küçük şablon farklı hücrelerde de 0.93-0.97 verdi; görsel incelemede bu eşleşmeler
+     yanlıştı.
+   - Pürüzsüz yakın çekimlerde ORB yeterli nokta bulamadı. SIFT ise bazı ALL-IDB2 görüntülerinde AML ile bile
+     60-80 sahte inlier üretti.
+   - Eşik NCC ≥ 0.95. Gerçek eşleşmeler 0.99-1.00 verdi; AML (negatif kontrol) en fazla 0.82.
+3. **Kırpım arama:** 1-2'de eşleşmeyen 1091 yaymada iki yöntem denendi.
+   - **ORB oylaması:** ALL-IDB1 (aynalı dahil) içinde arama, ≥ 30 inlier ile kabul.
+   - **Şablon eşleştirme:** küçültülmüş ALL-IDB1 üzerinde, öteleme + ölçek + ayna.
+   - ORB kırpım eşleşmeleri, bulunan dönüşümle hizalanınca hücre hücre örtüştü. Düşük NCC'li olanlarda da durum
+     aynıydı; fark augmentasyon gürültüsünden geliyor.
+   - **Şablon taraması tek başına kabul edilmedi:**
+     - 0.90'ı geçen 15 eşleşmenin hiçbirinde ORB geometrik destek bulamadı.
+     - 8'i etiketle çelişiyordu (Kaggle Healthy ↔ ALL-IDB `_1`).
+     - Skorlar AML'nin en yüksek değerine (0.85) çok yakındı.
+     - Tekdüze eritrosit dokusunda şablon korelasyonu ayırt edici değil.
+4. **Bağlantılar:**
+   - Kaggle kopya grupları (`grup_id`) üzerinden yayılım.
+   - ALL-IDB2 kırpımlarının kaynak ALL-IDB1 yayması: şablon eşleştirme, NCC ≈ 0.99. 260 kırpımın 260'ının kaynağı
+     bulundu.
+   - ALL-IDB1'in kendi içindeki kopyalar: 1 çift (Im093_0 ↔ Im108_0).
+- **Negatif kontrol:** ALL-IDB'de AML yok. 600 AML görüntüsünün hiçbiri eşleşmedi; bu, yanlış pozitif oranının
+  düşük olduğunu gösteriyor.
+
+**Sonuçlar:**
+
+| Kaggle sınıfı | Görüntü | Eşleşen görüntü (doğrudan / grup yayılımıyla) | Grup | Eşleşen grup | Geliştirme / test |
+|---|---:|---:|---:|---:|---:|
+| ALL | 600 | 272 / 282 (%47) | 421 | 127 (%30) | 100 / 27 |
+| AML | 600 | 0 / 0 | 163 | 0 | 0 / 0 |
+| Healthy | 600 | 279 / 334 (%56) | 248 | 80 (%32) | 65 / 15 |
+
+- **Etiketler uyumlu:** ALL ile eşleşen 272 görüntünün hepsi ALL-IDB `_1`, Healthy ile eşleşen 279 görüntünün hepsi
+  `_0` ile eşleşti.
+- **Kaggle'daki ALL-IDB türevleri:**
+  - ALL'da: ALL-IDB1 yaymaları (49 tam boy, 185 sıkıştırılmış 256x256) ve ALL-IDB2 kırpımları
+    (88 yakın çekim; 9'u ALL-IDB1'den kesilmiş, ALL-IDB2'de olmayan kırpımlar).
+  - Healthy'de: ALL-IDB1 `_0` yaymaları (65 tam boy, 214 sıkıştırılmış).
+  - Özgün boyutlu Kaggle görüntülerinin **hepsi** eşleşti (1712x1368: 49/49, 2592x1944: 65/65, 257x257: 37/37).
+  - Kaggle'ın geri kalanı (ALL'ın %53'ü, Healthy'nin %44'ü, AML'nin tamamı) ALL-IDB'de bulunamadı. Bu görüntüler başka
+    kaynaklardan geliyor olabilir ya da yöntemin yakalayamadığı ağır augmentasyonlar olabilir.
+- **Görülen ALL-IDB görüntüleri:**
+  - ALL-IDB1: 73/108 görüntü Kaggle'da var (32 ALL, 41 sağlıklı).
+  - ALL-IDB2: 41 kırpım doğrudan Kaggle'da var. 133 kırpımın ise kaynak yayması Kaggle'da.
+
+**Önemli bulgu — kilitli test setinde sızıntı:**
+- Adım 1'in kopya tespiti aynı ALL-IDB görüntüsünün tam hâlini, sıkıştırılmış 256x256 hâlini ve kırpımlarını her zaman
+  aynı gruba bağlayamamış.
+- Bu yüzden 33 ALL-IDB1 görüntüsü hem geliştirme hem test gruplarında görülüyor.
+- Test setinde ALL-IDB kaynağı geliştirme setindeki bir grupla ortak olanlar:
+  - **ALL:** 120 görüntünün 44'ü (eşleşen 27 test grubunun 25'i).
+  - **Healthy:** 120 görüntünün 63'ü (eşleşen 15 test grubunun 15'i).
+  - **AML:** 0.
+- Adım 5'in test sonuçları (görüntü makro F1 0.952-0.968) özellikle ALL ve Healthy için **iyimser** olabilir.
+  `veri_bolumu.csv` kurala göre yeniden üretilmedi. Sızıntılı test görüntüleri hariç tutularak ayrı bir değerlendirme
+  yapılması önerilir.
+  - **Yapıldı (Adım 5.10):** sızıntısız alt kümede eski modelin sonucu değişmedi. Ayrım `kaynak_grup_id` ile
+    yeniden kuruldu (`veri_bolumu_v2.csv`) ve model yeniden eğitildi.
+- AML'nin hiçbir görüntüsü ALL-IDB'den gelmiyor; ALL ve Healthy'nin yarısı geliyor. Bu nedenle sınıflar arasında
+  kaynak (mikroskop, kamera, boyama) farkı var ve model kısmen bunu öğreniyor olabilir (Adım 5.9'daki kısıtın somut kanıtı).
+
+**Dış doğrulamada güvenle kullanılabilecek ALL-IDB görüntüleri** (`allidb_goruntu_durumu.csv`,
+`dis_dogrulama_guvenli = True`):
+- **ALL-IDB1:** 35 yayma (17 ALL `_1`, 18 sağlıklı `_0`). Ne kendisi, ne iç kopyası, ne de ondan kesilmiş bir kırpım
+  Kaggle'da bulundu.
+- **ALL-IDB2:** 86 kırpım (58 `_1`, 28 `_0`). Ne kırpımın kendisi ne de kaynak yayması Kaggle'da bulundu.
+  Kaynak yayması görülmüş 133 kırpım hariç tutuldu; o hücreler eğitimde yaymanın içinde düşük çözünürlükte görülmüş
+  olabilir.
+- **Kısıt:** "görülmedi", yöntemin eşleşme **bulamadığı** anlamına gelir. Eşleşen Kaggle gruplarında görüntülerin
+  ALL'da %96'sı, Healthy'de %84'ü doğrudan bulundu; kalanları grup yayılımıyla bağlandı. Bir ALL-IDB görüntüsünün
+  Kaggle'da genellikle birden çok kopyası olduğundan, kaynak düzeyinde kaçırma olasılığı görüntü düzeyinden daha
+  düşük. Yine de sıfır değil.
+- ALL-IDB'de AML olmadığı için dış doğrulama yalnızca ALL ve Healthy ayrımını (anormal ↔ sağlıklı) sınayabilir.
+
 ---

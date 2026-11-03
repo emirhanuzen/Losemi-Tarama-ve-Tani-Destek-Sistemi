@@ -8,8 +8,9 @@ import matplotlib
 matplotlib.use("Agg")  # Ekransız ortamda (betik/Streamlit) figür kaydetmek için
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
-from src.config import STAGE_OUTPUT_DIRS
+from src.config import FEATURE_PREFIXES, STAGE_OUTPUT_DIRS
 
 
 def load_image(path: str | Path) -> np.ndarray:
@@ -112,3 +113,18 @@ def save_comparison_figure(images: dict[str, np.ndarray], stage: str, name: str)
         ax.axis("off")
     fig.tight_layout()
     return save_figure(fig, stage, name)
+
+
+def feature_columns(df: pd.DataFrame) -> list[str]:
+    """
+    Sınıflandırmada kullanılabilecek öznitelik sütunlarını döndürür (sekil_/renk_/doku_ önekli).
+
+    Meta veri (meta_*), etiket, grup_id ve hucre_id bilinçli olarak hariçtir.
+
+    Parametreler:
+        df: Öznitelik tablosu.
+
+    Döndürür:
+        Sütun adları listesi.
+    """
+    return [c for c in df.columns if c.startswith(FEATURE_PREFIXES)]

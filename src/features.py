@@ -33,7 +33,6 @@ from src.config import (
     CELLS_INDEX_CSVS,
     CYTOPLASM_MIN_CONTRAST,
     DATASET_INDEX_CSV,
-    FEATURE_PREFIXES,
     FEATURE_REF_RBC_DIAMETER,
     FEATURES_CSVS,
     GLCM_ANGLES_DEG,
@@ -50,6 +49,8 @@ from src.config import (
     SEGMENTATION_METHODS,
 )
 from src.segmentation import BACKGROUND_INV_B, MASK_NUCLEUS, MASK_OTHER_NUCLEUS, MASK_PADDING
+# feature_columns utils'te: sınıflandırma modülleri görüntü işleme kütüphanelerini yüklemeden kullanabilsin
+from src.utils import feature_columns  # noqa: F401  (src.features.feature_columns olarak da kullanılır)
 
 COLOR_CHANNELS = ["L", "a", "b", "H", "S", "V"]
 
@@ -451,9 +452,27 @@ def cell_features(cell: pd.Series) -> dict:
     """
     crop = read_png(cell["kirpim_yolu"], color=True)
     coded = read_png(cell["maske_yolu"], color=False)
+    return crop_features(crop, coded, cell["eritrosit_capi"])
+
+
+def crop_features(crop: np.ndarray, coded: np.ndarray, rbc_diameter: float) -> dict:
+    """
+    Bellekteki bir hücre kırpımından tüm öznitelikleri ve meta veriyi çıkarır.
+
+    Diskten okuyan cell_features ile uçtan uca pipeline (src/pipeline.py) aynı hesaplamayı
+    kullanır; PNG kayıpsız olduğu için iki yol aynı değerleri üretir.
+
+    Parametreler:
+        crop: Renk normalize RGB kırpım (segmentation.extract_cells "kirpim").
+        coded: Kodlu maske (segmentation.extract_cells "maske").
+        rbc_diameter: Kaynak görüntüdeki eritrosit çapı (px).
+
+    Döndürür:
+        Öznitelik + meta sözlüğü.
+    """
     native_nucleus = coded == MASK_NUCLEUS
-    nc, nc_status = nc_ratio(crop, coded, cell["eritrosit_capi"])
-    image, coded_ref, scale = to_reference_scale(crop, coded, cell["eritrosit_capi"])
+    nc, nc_status = nc_ratio(crop, coded, rbc_diameter)
+    image, coded_ref, scale = to_reference_scale(crop, coded, rbc_diameter)
     nucleus = coded_ref == MASK_NUCLEUS
     if nucleus.sum() < 3:  # Çok küçük çekirdek yeniden örneklemede kaybolursa en yakın piksel kullanılır
         coded_ref = cv2.resize(coded, image.shape[1::-1], interpolation=cv2.INTER_NEAREST)
@@ -508,21 +527,6 @@ def build_feature_table(method: str) -> pd.DataFrame:
     table = pd.concat([meta, feats], axis=1)
     table.to_csv(FEATURES_CSVS[method], index=False, encoding="utf-8")
     return table
-
-
-def feature_columns(df: pd.DataFrame) -> list[str]:
-    """
-    Sınıflandırmada kullanılabilecek öznitelik sütunlarını döndürür (sekil_/renk_/doku_ önekli).
-
-    Meta veri (meta_*), etiket, grup_id ve hucre_id bilinçli olarak hariçtir.
-
-    Parametreler:
-        df: Öznitelik tablosu.
-
-    Döndürür:
-        Sütun adları listesi.
-    """
-    return [c for c in df.columns if c.startswith(FEATURE_PREFIXES)]
 
 
 if __name__ == "__main__":

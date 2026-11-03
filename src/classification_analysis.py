@@ -32,6 +32,7 @@ from threadpoolctl import threadpool_limits
 
 from src.classifier import (
     MODEL_NAMES,
+    SUFFIX,
     build_model,
     load_cells,
     load_split,
@@ -53,10 +54,10 @@ from src.config import (
     RANDOM_STATE,
     SEGMENTATION_METHOD,
     SEGMENTATION_METHODS,
+    SPLIT_VERSION,
 )
 from src.dataset import CLASS_COLORS, SURFACE, TEXT_PRIMARY, TEXT_SECONDARY, _style_axes
-from src.features import feature_columns
-from src.utils import save_figure, stage_dir
+from src.utils import feature_columns, save_figure, stage_dir
 
 # Hiperparametre ızgaraları bilinçli olarak küçük: 13 yapılandırma × 5 kat. Geniş ızgara CV skorunu
 # iyimserleştirir (çok sayıda denemeden en iyisini seçmek, doğrulama katına uyum sağlamaktır).
@@ -198,17 +199,22 @@ def model_comparison() -> pd.DataFrame:
     """
     cells, images = dev_data()
     features = select_features(feature_columns(cells), "tumu")
+    path = stage_dir("classification") / f"model_karsilastirma{SUFFIX}.csv"
+    total = sum(len(g) for g in PARAM_GRID.values())
     rows = []
     for name, grid in PARAM_GRID.items():
         for params in grid:
             row, _ = run_config(cells, images, features, name, params)
             rows.append({"model": name, "model_adi": MODEL_NAMES[name], "parametreler": str(params), **row})
-            print(f"  {MODEL_NAMES[name]:<22} {str(params):<60} hücre F1 {row['hucre_makro_f1']:.3f} "
-                  f"görüntü F1 {row['goruntu_makro_f1_tum']:.3f} ({row['sure_sn']} sn)")
+            # Her yapılandırmadan sonra tablo yazılır: uzun çalışma yarıda kalırsa biten sonuçlar kaybolmaz
+            pd.DataFrame(rows).to_csv(path, index=False, encoding="utf-8")
+            print(f"  [{len(rows)}/{total}] {MODEL_NAMES[name]:<22} {str(params):<60} hücre F1 "
+                  f"{row['hucre_makro_f1']:.3f} görüntü F1 {row['goruntu_makro_f1_tum']:.3f} ({row['sure_sn']} sn)",
+                  flush=True)
     table = pd.DataFrame(rows)
     best = table.groupby("model")["hucre_makro_f1"].idxmax()
     table["en_iyi"] = table.index.isin(best)
-    table.to_csv(stage_dir("classification") / "model_karsilastirma.csv", index=False, encoding="utf-8")
+    table.to_csv(path, index=False, encoding="utf-8")
 
     plot_model_comparison(table)
     return table
@@ -239,10 +245,10 @@ def plot_model_comparison(table: pd.DataFrame) -> None:
     fig, ax = plt.subplots(figsize=(8.4, 3.8), facecolor=SURFACE)
     bar_panel(ax, [f"{r.model_adi}\n{short_params(r.parametreler)}" for r in top.itertuples()],
               {"Hücre makro F1": top["hucre_makro_f1"].tolist(), "Görüntü makro F1": top["goruntu_makro_f1_tum"].tolist()},
-              SERIES_COLORS, "Model karşılaştırması — geliştirme seti, 5 katlı grup CV (en iyi yapılandırma)",
+              SERIES_COLORS, f"Model karşılaştırması — geliştirme seti ({SPLIT_VERSION}), 5 katlı grup CV (en iyi yapılandırma)",
               errors=top["hucre_makro_f1_kat_std"].tolist())
     fig.tight_layout()
-    save_figure(fig, "classification", "model_karsilastirma")
+    save_figure(fig, "classification", f"model_karsilastirma{SUFFIX}")
 
 
 def segmentation_comparison() -> pd.DataFrame:
@@ -264,7 +270,7 @@ def segmentation_comparison() -> pd.DataFrame:
         print(f"  {METHOD_NAMES[method]:<10} hücre F1 {row['hucre_makro_f1']:.3f} görüntü F1 (tüm) "
               f"{row['goruntu_makro_f1_tum']:.3f} kapsama {row['goruntu_kapsama']:.3f}")
     table = pd.DataFrame(rows)
-    table.to_csv(stage_dir("classification") / "segmentasyon_karsilastirma.csv", index=False, encoding="utf-8")
+    table.to_csv(stage_dir("classification") / f"segmentasyon_karsilastirma{SUFFIX}.csv", index=False, encoding="utf-8")
 
     fig, ax = plt.subplots(figsize=(6.4, 3.6), facecolor=SURFACE)
     bar_panel(ax, [METHOD_NAMES[m] for m in table["yontem"]],
@@ -274,7 +280,7 @@ def segmentation_comparison() -> pd.DataFrame:
               SERIES_COLORS, f"Segmentasyon yöntemine göre sınıflandırma ({MODEL_NAMES[CLASSIFIER_MODEL]})",
               errors=table["hucre_makro_f1_kat_std"].tolist())
     fig.tight_layout()
-    save_figure(fig, "classification", "segmentasyon_karsilastirma")
+    save_figure(fig, "classification", f"segmentasyon_karsilastirma{SUFFIX}")
     return table
 
 
@@ -287,25 +293,27 @@ def feature_ablation() -> pd.DataFrame:
     """
     cells, images = dev_data()
     columns = feature_columns(cells)
+    path = stage_dir("classification") / f"oznitelik_ablasyonu{SUFFIX}.csv"
     rows = []
     for key, title in ABLATION_SETS.items():
         features = select_features(columns, key)
         row, _ = run_config(cells, images, features, CLASSIFIER_MODEL, CLASSIFIER_PARAMS)
         rows.append({"kume": key, "kume_adi": title, "oznitelik_sayisi": len(features), **row})
-        print(f"  {title:<24} ({len(features):>2}) hücre F1 {row['hucre_makro_f1']:.3f} "
-              f"görüntü F1 {row['goruntu_makro_f1_tum']:.3f}")
+        pd.DataFrame(rows).to_csv(path, index=False, encoding="utf-8")   # her kümeden sonra yaz
+        print(f"  [{len(rows)}/{len(ABLATION_SETS)}] {title:<24} ({len(features):>2}) hücre F1 "
+              f"{row['hucre_makro_f1']:.3f} görüntü F1 {row['goruntu_makro_f1_tum']:.3f} ({row['sure_sn']} sn)",
+              flush=True)
     table = pd.DataFrame(rows)
-    table.to_csv(stage_dir("classification") / "oznitelik_ablasyonu.csv", index=False, encoding="utf-8")
 
     fig, ax = plt.subplots(figsize=(9.5, 3.8), facecolor=SURFACE)
     bar_panel(ax, [f"{t}\n({n})" for t, n in zip(table["kume_adi"], table["oznitelik_sayisi"])],
               {"Hücre makro F1": table["hucre_makro_f1"].tolist(),
                "Görüntü makro F1": table["goruntu_makro_f1_tum"].tolist()},
-              SERIES_COLORS, f"Öznitelik ablasyonu ({MODEL_NAMES[CLASSIFIER_MODEL]}, geliştirme CV)",
+              SERIES_COLORS, f"Öznitelik ablasyonu ({MODEL_NAMES[CLASSIFIER_MODEL]}, geliştirme CV, {SPLIT_VERSION})",
               errors=table["hucre_makro_f1_kat_std"].tolist())
     ax.tick_params(axis="x", labelsize=7.5)
     fig.tight_layout()
-    save_figure(fig, "classification", "oznitelik_ablasyonu")
+    save_figure(fig, "classification", f"oznitelik_ablasyonu{SUFFIX}")
     return table
 
 
@@ -381,7 +389,7 @@ def shortcut_check() -> pd.DataFrame:
     rows.append({"kontrol": "ALL içinde tip tahmini (tüm öznitelikler) ROC AUC", "lojistik_auc": auc["lojistik_auc"],
                  "rf_auc": auc["rf_auc"]})
     table = pd.DataFrame(rows)
-    table.to_csv(stage_dir("classification") / "kisayol_kontrolu.csv", index=False, encoding="utf-8")
+    table.to_csv(stage_dir("classification") / f"kisayol_kontrolu{SUFFIX}.csv", index=False, encoding="utf-8")
     print(table.round(3).to_string(index=False))
     return table
 
@@ -419,7 +427,7 @@ def edge_experiment() -> pd.DataFrame:
             "goruntu_f1_kenar_ortalamaya_dahil": img_incl["goruntu_makro_f1_tum"],
         })
     table = pd.DataFrame(rows)
-    table.to_csv(stage_dir("classification") / "kenar_hucreleri_deneyi.csv", index=False, encoding="utf-8")
+    table.to_csv(stage_dir("classification") / f"kenar_hucreleri_deneyi{SUFFIX}.csv", index=False, encoding="utf-8")
     print(table.round(3).T.to_string())
 
     fig, ax = plt.subplots(figsize=(7.4, 3.6), facecolor=SURFACE)
@@ -432,7 +440,7 @@ def edge_experiment() -> pd.DataFrame:
               "Kenara değen hücreler: eğitimde hariç / dahil (geliştirme CV)")
     ax.tick_params(axis="x", labelsize=7.5)
     fig.tight_layout()
-    save_figure(fig, "classification", "kenar_hucreleri_deneyi")
+    save_figure(fig, "classification", f"kenar_hucreleri_deneyi{SUFFIX}")
     return table
 
 
