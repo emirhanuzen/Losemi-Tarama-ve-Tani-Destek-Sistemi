@@ -9,15 +9,23 @@ figürler ve örnek PDF raporlar.
   (geri dönüş hücreleri dahil) tahmin eder.
 - Test seti: kayıtlı son model (models/) ile; yalnızca seçilmiş eşiklerin sonucunu raporlamak için.
 - Örnek PDF'ler gerçek uçtan uca pipeline ile (src.pipeline.run_pipeline) üretilir; aynı görüntülerde
-  tablo tabanlı sonuçla tutarlılık da kontrol edilir.
+  tablo tabanlı sonuçla tutarlılık da kontrol edilir. Örnekler yalnızca kaynağı "bilinmiyor" olan test
+  görüntülerinden seçilir: ALL-IDB türevleri lisans gereği paylaşılamaz, reports/ornekler/ ise repoya girer.
+
+İki bölüm (argümansız: ikisi sırayla):
+- analiz:   geri dönüş etkisi, eşik seçimi, test risk sonuçları, figürler (yalnızca tablolar; skimage gerekmez).
+- ornekler: analiz çıktısından (risk_goruntu_sonuclari.csv) örnek seçimi, PDF'ler ve pipeline tutarlılık
+            kontrolü (görüntü işleme kütüphaneleri gerekir).
 
 Çalıştırma (proje kökünden):
-    python -m src.risk_analysis
+    python -m src.risk_analysis [analiz] [ornekler]
 """
 
 import json
 import re
+import sys
 import time
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -25,9 +33,10 @@ import pandas as pd
 from threadpoolctl import threadpool_limits
 
 from src.classifier import (
+    GROUP_COLUMN,
     NO_CELL,
     aggregate_images,
-    build_model,
+    fit_model,
     label_metrics,
     load_cells,
     load_model,
@@ -37,12 +46,14 @@ from src.classifier import (
 from src.config import (
     ABNORMAL_CLASSES,
     CLASS_NAMES,
+    CLASSIFIER_CALIBRATION,
     CLASSIFIER_MODEL,
     CLASSIFIER_PARAMS,
     CV_FOLDS,
     EXAMPLE_REPORTS_DIR,
     N_JOBS,
     RANDOM_STATE,
+    RISK_RESULT_SUFFIX,
     RISK_LEVELS,
     RISK_NO_CELL_LEVEL,
     RISK_TARGET_SENSITIVITY,
@@ -52,10 +63,12 @@ from src.config import (
     SEGMENTATION_METHOD,
 )
 from src.dataset import CLASS_COLORS, SURFACE, TEXT_PRIMARY, TEXT_SECONDARY
-from src.risk_report import compute_risk, generate_pdf_report
+from src.risk_report import NO_DOMINANT, compute_risk, generate_pdf_report
 from src.utils import save_figure, stage_dir
 
 PROBA_COLUMNS = [f"p_{c}" for c in CLASS_NAMES]
+# Çıktı dosyası soneki: kalibre modelin sonuçları ayrı dosyalara yazılır (kalibrasyonsuz sonuçlar silinmez)
+RS = RISK_RESULT_SUFFIX
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +95,8 @@ def dev_oof_proba(dev: pd.DataFrame, columns: list[str]) -> np.ndarray:
     """
     Geliştirme setinde katlar dışı olasılıkları hesaplar; eğitim yalnızca K-means hücreleriyle.
 
-    Son modelle aynı yapılandırma (CLASSIFIER_MODEL, CLASSIFIER_PARAMS, kenar hücreleri dahil) kullanılır;
+    Son modelle aynı yapılandırma (CLASSIFIER_MODEL, CLASSIFIER_PARAMS, CLASSIFIER_CALIBRATION, kenar hücreleri
+    dahil) kullanılır; kalibrasyonun iç katları her eğitim katının içinde kaynak gruplarıyla kurulur (fit_model);
     geri dönüş (Otsu) hücreleri eğitime girmez, yalnızca kendi katlarında tahmin edilir.
 
     Parametreler:
@@ -97,10 +111,12 @@ def dev_oof_proba(dev: pd.DataFrame, columns: list[str]) -> np.ndarray:
     y = dev["etiket"].to_numpy()
     folds = dev["kat"].to_numpy()
     trainable = (dev["yontem"] == SEGMENTATION_METHOD).to_numpy()
+    groups = dev[GROUP_COLUMN].to_numpy()
     with threadpool_limits(limits=N_JOBS):
         for fold in range(CV_FOLDS):
             train = (folds != fold) & trainable
-            model = build_model(CLASSIFIER_MODEL, CLASSIFIER_PARAMS).fit(X[train], y[train])
+            model = fit_model(X[train], y[train], groups[train], CLASSIFIER_MODEL, CLASSIFIER_PARAMS,
+                              CLASSIFIER_CALIBRATION)
             proba[folds == fold] = reorder_proba(model, model.predict_proba(X[folds == fold]))
             print(f"  [katlar dışı] kat {fold + 1}/{CV_FOLDS}", flush=True)
     return proba
@@ -159,8 +175,10 @@ def image_risk_table(cells: pd.DataFrame, proba: np.ndarray, images: pd.DataFram
             **{f"n_{c}": r["hucre_sayilari"][c] for c in CLASS_NAMES},
             "anormal_oran": r["anormal_oran"], "anormal_oran_yumusak": r["anormal_oran_yumusak"],
             "baskin_tip": r["baskin_tip"], "baskin_oran": r["baskin_oran"],
+            "baskin_tip_ham": r["baskin_tip_ham"], "baskin_oran_ham": r["baskin_oran_ham"],
             "risk_seviyesi": r["risk_seviyesi"], "guven": r["guven"],
             "guven_nedenleri": " | ".join(r["guven_nedenleri"]), "kenar_orani": r["kenar_orani"],
+            "kaynak": img.get("kaynak", "bilinmiyor"),
         })
     return pd.DataFrame(rows)
 
@@ -257,7 +275,8 @@ def level_metrics(img: pd.DataFrame, thresholds: tuple) -> dict:
     out["lösemi_dusuk_orani"] = float((level[img["etiket"] != "Healthy"] == "Düşük").mean())
     out["healthy_yuksek_orani"] = float((level[img["etiket"] == "Healthy"] == "Yüksek").mean())
     out["dusuk_guven_orani"] = float((img["guven"] == "Düşük").mean())
-    abn = img[img["etiket"].isin(ABNORMAL_CLASSES) & (img["baskin_tip"] != "-")]
+    # Gösterilen baskın tip (yalnızca Orta/Yüksek riskte) gerçek lösemi tipiyle aynı mı
+    abn = img[img["etiket"].isin(ABNORMAL_CLASSES) & (img["baskin_tip"] != NO_DOMINANT)]
     out["baskin_tip_dogrulugu"] = float((abn["baskin_tip"] == abn["etiket"]).mean()) if len(abn) else np.nan
     return out
 
@@ -330,7 +349,7 @@ def plot_risk_distribution(dev_img: pd.DataFrame, test_img: pd.DataFrame, thresh
                 ax.set_title(title, color=TEXT_PRIMARY, fontsize=10, pad=16)
         axes[-1, j].set_xlabel("Risk skoru (anormal hücre oranı)", color=TEXT_SECONDARY, fontsize=9)
     fig.tight_layout()
-    save_figure(fig, "risk", "risk_skoru_dagilimi")
+    save_figure(fig, "risk", f"risk_skoru_dagilimi{RS}")
 
 
 def plot_level_confusion(img: pd.DataFrame, name: str, title: str) -> None:
@@ -360,7 +379,7 @@ def plot_level_confusion(img: pd.DataFrame, name: str, title: str) -> None:
     for side in ax.spines.values():
         side.set_visible(False)
     fig.tight_layout()
-    save_figure(fig, "risk", name)
+    save_figure(fig, "risk", f"{name}{RS}")
 
 
 # ---------------------------------------------------------------------------
@@ -373,6 +392,7 @@ def choose_examples(test_img: pd.DataFrame) -> pd.DataFrame:
 
     Seçim rastgeledir (RANDOM_STATE), doğru/yanlış tahmine bakılmaz (iyi örnek seçme yanlılığı olmasın).
     Düşük güvenli örnek için öncelik Otsu geri dönüşüyle hücre bulunan görüntüdür (geri dönüşü göstermek için).
+    Yalnızca kaynağı "bilinmiyor" olan görüntüler aday olur: ALL-IDB türevleri lisans gereği paylaşılamaz.
 
     Parametreler:
         test_img: Test görüntü risk tablosu.
@@ -381,6 +401,7 @@ def choose_examples(test_img: pd.DataFrame) -> pd.DataFrame:
         Seçilen satırlar + "ornek_turu" sütunu.
     """
     rng = np.random.default_rng(RANDOM_STATE)
+    test_img = test_img[test_img["kaynak"] == "bilinmiyor"]
     picks = []
     for cls in CLASS_NAMES:
         pool = test_img[(test_img["etiket"] == cls) & (test_img["guven"] == "Normal")]
@@ -422,7 +443,7 @@ def make_example_reports(examples: pd.DataFrame) -> pd.DataFrame:
     from src.pipeline import run_pipeline
     EXAMPLE_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     rows = []
-    for _, ex in examples.iterrows():
+    for k, (_, ex) in enumerate(examples.iterrows(), 1):
         result = run_pipeline(ex["dosya_yolu"])
         stem = safe_name(f"{ex['ornek_turu']}_{ex['etiket']}_{result['goruntu_adi'].rsplit('.', 1)[0]}")
         pdf = generate_pdf_report(result, EXAMPLE_REPORTS_DIR / f"{stem}.pdf")
@@ -435,6 +456,9 @@ def make_example_reports(examples: pd.DataFrame) -> pd.DataFrame:
             "baskin_tip": r["baskin_tip"], "guven": r["guven"], "yontem": r["segmentasyon_yontemi"],
             "nedenler": " | ".join(r["guven_nedenleri"]),
         })
+        pd.DataFrame(rows).to_csv(stage_dir("risk") / f"ornek_raporlar{RS}.csv", index=False, encoding="utf-8")
+        print(f"  [{k}/{len(examples)}] {pdf.name}: {r['risk_seviyesi']} (skor {r['anormal_oran']:.2f}, "
+              f"güven {r['guven']})", flush=True)
     return pd.DataFrame(rows)
 
 
@@ -454,7 +478,7 @@ def consistency_check(test_img: pd.DataFrame, n: int = 30) -> pd.DataFrame:
     rows = []
     for _, row in sample.iterrows():
         r = run_pipeline(row["dosya_yolu"])["risk"]
-        rows.append({"goruntu": row["dosya_yolu"].rsplit("\\", 1)[-1], "hucre_tablo": row["toplam_hucre"],
+        rows.append({"goruntu": Path(row["dosya_yolu"]).name, "hucre_tablo": row["toplam_hucre"],
                      "hucre_pipeline": r["toplam_hucre"], "skor_tablo": row["anormal_oran"],
                      "skor_pipeline": r["anormal_oran"], "seviye_esit": row["risk_seviyesi"] == r["risk_seviyesi"]})
     return pd.DataFrame(rows)
@@ -464,9 +488,8 @@ def consistency_check(test_img: pd.DataFrame, n: int = 30) -> pd.DataFrame:
 # Ana akış
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    """Geri dönüş etkisini ölçer, eşikleri seçer, test sonuçlarını, figürleri ve örnek PDF'leri üretir."""
-    pd.set_option("display.width", 220)
+def run_analysis() -> None:
+    """Geri dönüş etkisini ölçer, eşikleri seçer, test risk sonuçlarını ve figürleri üretir (yalnızca tablolar)."""
     out_dir = stage_dir("risk")
     start = time.time()
     split = load_split()
@@ -485,7 +508,13 @@ def main() -> None:
 
     # 1) Geri dönüşün etkisi (test, görüntü düzeyi sınıflandırma)
     effect = fallback_effect(parts["test"], proba["test"], images["test"])
-    effect.to_csv(out_dir / "geri_donus_etkisi.csv", index=False, encoding="utf-8")
+    effect.to_csv(out_dir / f"geri_donus_etkisi{RS}.csv", index=False, encoding="utf-8")
+    fb_test = parts["test"][parts["test"]["geri_donus"]].copy()
+    fb_test["tahmin"] = np.asarray(CLASS_NAMES)[proba["test"][parts["test"]["geri_donus"].to_numpy()].argmax(axis=1)]
+    print("Test — Otsu ile kurtarılan görüntülerin hücre tahminleri:\n"
+          + fb_test.groupby(["meta_kaynak_dosya", "etiket"])["tahmin"].agg(lambda x: dict(x.value_counts()))
+          .reset_index().assign(meta_kaynak_dosya=lambda d: d["meta_kaynak_dosya"].map(lambda p: Path(p).name))
+          .to_string(index=False))
     cols = ["durum", "hucresiz_goruntu", "kapsama", "dogruluk", "makro_f1"] + [f"duyarlilik_{c}" for c in CLASS_NAMES] \
         + ["anormal_duyarlilik", "healthy_ozgulluk"]
     print("\n=== Otsu geri dönüşünün etkisi (test, görüntü düzeyi; hücresiz = hata) ===\n"
@@ -495,7 +524,7 @@ def main() -> None:
     dev_img = image_risk_table(parts["gelistirme"], proba["gelistirme"], images["gelistirme"], (None, None))
     scored = dev_img[dev_img["toplam_hucre"] > 0]
     low, high, cand = select_thresholds(scored["anormal_oran"].to_numpy(), scored["etiket"].isin(ABNORMAL_CLASSES).to_numpy())
-    cand.to_csv(out_dir / "esik_adaylari_gelistirme.csv", index=False, encoding="utf-8")
+    cand.to_csv(out_dir / f"esik_adaylari_gelistirme{RS}.csv", index=False, encoding="utf-8")
     from sklearn.metrics import roc_auc_score
     ab = scored["etiket"].isin(ABNORMAL_CLASSES)
     print(f"\nGeliştirme AUC (lösemi vs Healthy): sert skor {roc_auc_score(ab, scored['anormal_oran']):.3f}, "
@@ -511,11 +540,11 @@ def main() -> None:
     dev_img = image_risk_table(parts["gelistirme"], proba["gelistirme"], images["gelistirme"], thresholds)
     test_img = image_risk_table(parts["test"], proba["test"], images["test"], thresholds)
     pd.concat([dev_img.assign(bolum="gelistirme"), test_img.assign(bolum="test")]).to_csv(
-        out_dir / "risk_goruntu_sonuclari.csv", index=False, encoding="utf-8")
+        out_dir / f"risk_goruntu_sonuclari{RS}.csv", index=False, encoding="utf-8")
     dev_m, test_m = level_metrics(dev_img, thresholds), level_metrics(test_img, thresholds)
     summary = pd.DataFrame([{"bolum": "gelistirme (katlar disi)", **dev_m}, {"bolum": "test", **test_m}])
-    summary.to_csv(out_dir / "risk_seviyesi_metrikleri.csv", index=False, encoding="utf-8")
-    (out_dir / "risk_esikleri.json").write_text(json.dumps({
+    summary.to_csv(out_dir / f"risk_seviyesi_metrikleri{RS}.csv", index=False, encoding="utf-8")
+    (out_dir / f"risk_esikleri{RS}.json").write_text(json.dumps({
         "skor": "anormal_oran", "dusuk_orta": thresholds[0], "orta_yuksek": thresholds[1],
         "hedef_duyarlilik": RISK_TARGET_SENSITIVITY, "hedef_ozgulluk": RISK_TARGET_SPECIFICITY,
         "gelistirme_duyarlilik_dusuk_orta": dev_m["duyarlilik_dusuk_orta"],
@@ -541,19 +570,27 @@ def main() -> None:
     fb = test_img[test_img["geri_donus"]]
     print("\nTest — geri dönüş kullanılan görüntüler:\n"
           + fb[["dosya_yolu", "etiket", "toplam_hucre", "anormal_oran", "risk_seviyesi", "baskin_tip"]]
-          .assign(dosya_yolu=fb["dosya_yolu"].str.rsplit("\\", n=1).str[-1]).to_string(index=False))
+          .assign(dosya_yolu=fb["dosya_yolu"].map(lambda p: Path(p).name)).to_string(index=False))
 
     plot_risk_distribution(dev_img, test_img, thresholds)
     plot_level_confusion(test_img, "test_risk_seviyesi_karisiklik", "Test — gerçek sınıf × risk seviyesi")
     plot_level_confusion(dev_img, "gelistirme_risk_seviyesi_karisiklik", "Geliştirme (katlar dışı) — sınıf × risk seviyesi")
+    choose_examples(test_img).to_csv(out_dir / f"ornek_secimi{RS}.csv", index=False, encoding="utf-8")
+    print(f"\nSüre: {time.time() - start:.0f} sn")
 
-    # 3) Örnek raporlar ve tutarlılık kontrolü (gerçek uçtan uca pipeline)
-    print("\nÖrnek PDF raporlar (uçtan uca pipeline)...")
-    examples = make_example_reports(choose_examples(test_img))
-    examples.to_csv(out_dir / "ornek_raporlar.csv", index=False, encoding="utf-8")
+
+def run_examples() -> None:
+    """Analiz çıktısından örnek görüntüleri alıp PDF'leri üretir ve pipeline tutarlılığını kontrol eder."""
+    out_dir = stage_dir("risk")
+    start = time.time()
+    results = pd.read_csv(out_dir / f"risk_goruntu_sonuclari{RS}.csv")
+    test_img = results[results["bolum"] == "test"].reset_index(drop=True)
+    examples = pd.read_csv(out_dir / f"ornek_secimi{RS}.csv")
+    print("Örnek PDF raporlar (uçtan uca pipeline)...")
+    examples = make_example_reports(examples)
     print(examples.drop(columns=["nedenler"]).round(3).to_string(index=False))
     check = consistency_check(test_img)
-    check.to_csv(out_dir / "pipeline_tutarlilik.csv", index=False, encoding="utf-8")
+    check.to_csv(out_dir / f"pipeline_tutarlilik{RS}.csv", index=False, encoding="utf-8")
     same_n = (check["hucre_tablo"] == check["hucre_pipeline"]).mean()
     diff = (check["skor_tablo"] - check["skor_pipeline"]).abs().max()
     print(f"\nTutarlılık ({len(check)} test görüntüsü): hücre sayısı eşit %{100 * same_n:.0f}, "
@@ -561,6 +598,17 @@ def main() -> None:
     if same_n < 1:
         print(check[check["hucre_tablo"] != check["hucre_pipeline"]].to_string(index=False))
     print(f"\nSüre: {time.time() - start:.0f} sn")
+
+
+PARTS = {"analiz": run_analysis, "ornekler": run_examples}
+
+
+def main() -> None:
+    """Komut satırında adı verilen bölümleri (argümansız: analiz ve ornekler) sırayla çalıştırır."""
+    pd.set_option("display.width", 220)
+    for name in sys.argv[1:] or list(PARTS):
+        print(f"\n=== {name} ===", flush=True)
+        PARTS[name]()
 
 
 if __name__ == "__main__":

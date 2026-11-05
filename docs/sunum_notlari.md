@@ -1363,6 +1363,115 @@ kilitli testinde (kayıtlı v2 modeli) yapıldı.
 - Risk skoru ve eşik analizi (Adım 6) artık v2 ayrımını ve `losemi_siniflandirici_v2` modelini kullanıyor
   (`config.SPLIT_VERSION = "v2"`).
 
+### 5.11 Veri miktarı yeterli mi? (öğrenme eğrisi)
+
+**Ne yapıldı:** Seçilen model (HGB, lr 0.1, 58 öznitelik) v2 geliştirme setinin kaynak gruplarının %20, %40, %60,
+%80 ve %100'üyle eğitildi (`python -m src.classification_analysis ogrenme`).
+- **Grup seçimi:** Her oran için 3 farklı rastgele alt örnek alındı. Gruplar etiket × kaynak katmanı içinde
+  seçildi, böylece küçük oranlarda da her sınıf ve kaynak temsil edildi.
+- **Doğrulama:** 5 katlı kaynak grubu CV katları sabit tutuldu ve her koşuda **tüm** doğrulama hücreleri
+  değerlendirildi. Yalnızca eğitime giren gruplar azaltıldı. Oranlar arasındaki fark bu yüzden yalnızca eğitim
+  verisi miktarından geliyor.
+- %100'de alt örnek tek (tüm gruplar) ve HGB belirlenimci olduğundan bu oran bir kez koşuldu.
+- Toplam 13 koşu, ~7 dk.
+
+[ogrenme_egrisi.png](../outputs/classification/ogrenme_egrisi.png),
+[ogrenme_egrisi_v2.csv](../outputs/classification/ogrenme_egrisi_v2.csv)
+
+| Grup oranı | Seçilen grup / görüntü / hücre | Hücre makro F1 | Görüntü makro F1 (tümü) | Hücre F1 ALL / AML / Healthy | Görüntü F1 ALL / AML / Healthy |
+|---|---|---:|---:|---|---|
+| %20 | 112 / 331 / 2.201 | 0.835 ± 0.009 | 0.928 ± 0.009 | 0.854 / 0.934 / **0.717** | 0.953 / 0.942 / 0.889 |
+| %40 | 222 / 527 / 4.465 | 0.867 ± 0.007 | 0.931 ± 0.007 | 0.896 / 0.952 / 0.753 | 0.971 / 0.940 / 0.881 |
+| %60 | 332 / 825 / 8.722 | 0.878 ± 0.013 | 0.938 ± 0.005 | 0.913 / 0.955 / 0.765 | 0.971 / 0.946 / 0.898 |
+| %80 | 442 / 1.167 / 11.885 | 0.893 ± 0.001 | 0.951 ± 0.005 | 0.892 / 0.958 / 0.828 | 0.977 / 0.962 / 0.913 |
+| %100 | 554 / 1.439 / 14.729 | 0.903 | 0.952 | 0.915 / 0.964 / 0.829 | 0.981 / 0.962 / 0.912 |
+
+(± : 3 tekrar arası std. Seçilen hücre sayısı seçilen grupların tamamıdır; her katta bunun ~%80'i eğitime girer.)
+
+**Yorum:**
+- **Görüntü düzeyinde eğri düzleşti.** Görüntü makro F1 %80'den %100'e değişmiyor (0.951 → 0.952). Görüntü
+  kararı birçok hücrenin ortalamasından geldiği için tek tek hücre hatalarını tolere ediyor. Daha fazla veri bu
+  düzeyde belirgin kazanç getirmeyecek gibi görünüyor.
+- **Hücre düzeyinde eğri henüz tam düzleşmedi.** Makro F1 her %20'lik artışta ~0.01-0.03 yükseliyor (0.893 → 0.903
+  son adımda). Daha fazla veriyle hücre düzeyinde küçük bir kazanç beklenir.
+- **En çok veriye ihtiyaç duyan sınıf Healthy:**
+  - Hücre F1'i 0.717'den 0.829'a çıkıyor (+0.11). ALL'da artış +0.06, AML'de +0.03.
+  - Tekrarlar arası sapma da Healthy'de en büyük (0.02-0.03).
+  - Nedeni az hücre olması: geliştirme setinde yalnızca 964 Healthy hücresi var (hücrelerin %6.5'i). Healthy
+    yaymalarında görüntü başına ~2 lökosit bulunuyor; %20 oranında model ~200 Healthy hücresiyle eğitiliyor.
+  - Healthy eğrisi %80-%100 arasında yatay (0.828 → 0.829). Ancak bu tek bir adım ve %60 → %80 sıçraması büyük;
+    düzleşme kesin değil.
+- **AML en az veri isteyen sınıf:** %20'de bile hücre F1 0.934. AML'de 11.441 hücre var; çok sayıda hücre az sayıda
+  kaynaktan (130 grup) geliyor.
+- **ALL eğrisi gürültülü:** %60'ta 0.913, %80'de 0.892. ALL-IDB kaynak grupları büyük (tek grup 53 görüntüye kadar);
+  hangi büyük grubun seçildiği sonucu oynatıyor.
+- **Sonuç:** Mevcut veri görüntü düzeyindeki karar için yeterli görünüyor. Hücre düzeyinde, özellikle Healthy
+  hücrelerinde, daha fazla **bağımsız** sağlıklı örnek (yeni hastalar, yeni yaymalar) en büyük kazancı sağlar.
+  Aynı kaynakların yeni augmentasyonları ise sağlamaz.
+
+### 5.12 Olasılık kalibrasyonu
+
+**Sorun:** HGB'nin olasılıkları aşırı kendinden emin. Geliştirme CV'sinde hücrelerin %90'ında en olası sınıfın
+olasılığı ≥ 0.99, ama bu hücrelerin hepsi doğru sınıflanmıyor. Raporda gösterilen olasılıklar (1.000 / 0.000) ve
+yumuşak risk skoru bu yüzden yanıltıcıydı.
+
+**Yöntem:** `CalibratedClassifierCV(ensemble=False)` kullanıldı (`classifier.fit_model`).
+- **Model:** temel model tüm eğitim verisiyle eğitilir. Kalibratör, iç katların katlar dışı olasılıklarından öğrenilir.
+- **İç katlar:** 5 kat, `StratifiedGroupKFold` ile **kaynak grubu** düzeyinde. Aynı yaymanın türevleri hem kalibratörü
+  eğiten hem tahmin edilen tarafta olsaydı katlar dışı olasılıklar da aşırı iyimser kalırdı.
+- **Karşılaştırma:** v2 geliştirme setinin sabit dış katlarında, katlar dışı tahminlerle, tüm hücrelerde yapıldı.
+  Test kullanılmadı.
+
+Kodu: `python -m src.classification_analysis kalibrasyon` (~25 dk).
+[kalibrasyon_v2.csv](../outputs/classification/kalibrasyon_v2.csv),
+[kalibrasyon_guvenilirlik.png](../outputs/classification/kalibrasyon_guvenilirlik.png)
+
+| Yöntem | Brier ↓ | Log loss ↓ | ECE ↓ | Güven ≥ 0.99 | Sınıfı değişen hücre | Hücre / görüntü makro F1 |
+|---|---:|---:|---:|---:|---|---|
+| Kalibrasyonsuz | 0.114 | 0.366 | 0.051 | %90 | — | 0.903 / 0.952 |
+| Sigmoid (Platt) | **0.095** | **0.181** | **0.008** | %54 | 526 (%3.6): 289 ALL→AML, 231 Healthy→AML | 0.909 / 0.927 |
+| Isotonic | 0.095 | 0.231 | 0.011 | %54 | 560 (%3.8): 315 ALL→AML, 237 Healthy→AML | 0.911 / 0.926 |
+| Sigmoid (dengeli ağırlık) | 0.127 | 0.259 | 0.012 | %37 | 377 (%2.6): 262 AML→Healthy, 66 AML→ALL | 0.879 / 0.954 |
+| Isotonic (dengeli ağırlık) | 0.128 | 0.305 | 0.009 | %47 | 434 (%3.0): 299 AML→Healthy, 84 ALL→Healthy | 0.876 / 0.955 |
+| **Temperature (seçilen)** | 0.098 | 0.185 | 0.013 | %63 | **0** (görüntüde 1) | **0.903 / 0.951** |
+
+(Brier: çok sınıflı, olasılık vektörü ile tek-sıcak etiket arasındaki kare farkların toplamı; 0 = mükemmel.
+ECE: en olası sınıfın güven kutularında |doğruluk − güven| farkının ağırlıklı ortalaması.)
+
+![Güvenilirlik diyagramları](../outputs/classification/kalibrasyon_guvenilirlik.png)
+
+**Yorum:**
+- **Sigmoid ve isotonic olasılıkları iyi kalibre ediyor, ama sınıfları değiştiriyor.**
+  - Model `class_weight="balanced"` ile eğitildi: her sınıfın toplam ağırlığı eşit.
+  - Kalibratör ise ağırlıksız veride öğreniyor ve hücrelerin %77'sini oluşturan AML'nin önselini geri getiriyor.
+  - Sonuçta ~550 hücre AML'ye kayıyor ve görüntü makro F1 0.952'den 0.93'e düşüyor. "Tahmin edilen sınıflar
+    değişmemeli" şartını karşılamıyor.
+- **Kalibratörü dengeli ağırlıklarla öğrenmek ters yöne aşırı düzeltiyor** (~260-300 AML → Healthy). Brier
+  kalibrasyonsuzdan bile kötü.
+- **Temperature scaling** tüm sınıfların logitlerini tek bir sabitle böler (öğrenilen ölçek β = 0.33, yani T ≈ 3).
+  - Sıralama korunur, en olası sınıf hiçbir hücrede değişmez. Görüntü düzeyinde yalnızca 1 görüntü değişti; bu,
+    ortalaması alınan olasılıklar yumuşadığı için.
+  - Olasılık kalitesi büyük ölçüde iyileşti: Brier −%14, log loss yarıya indi, ECE 0.051 → 0.013.
+  - Brier'de sigmoid'in biraz gerisinde (0.098'e karşı 0.095), ama sınıfları değiştirmeyen tek yöntem.
+
+**Son model:** `models/losemi_siniflandirici_v2_kalibre.joblib` (temperature).
+- Pipeline, risk analizi ve PDF bunu varsayılan olarak kullanıyor (`config.CLASSIFIER_CALIBRATION`,
+  `config.ACTIVE_MODEL_FILE`). Kalibrasyonsuz `losemi_siniflandirici_v2` silinmedi.
+- **Kilitli test** (aynı test seti; seçim yalnızca geliştirmede yapıldı):
+  [kalibrasyon_test_v2.csv](../outputs/classification/kalibrasyon_test_v2.csv),
+  [test_metrikleri_v2_kalibre.csv](../outputs/evaluation/test_metrikleri_v2_kalibre.csv)
+
+| Test (3.587 hücre) | Brier | Log loss | ECE | Ort. güven | Güven ≥ 0.99 | Doğruluk |
+|---|---:|---:|---:|---:|---:|---:|
+| Kalibrasyonsuz | 0.059 | 0.213 | 0.026 | 0.992 | %94 | 0.966 |
+| **Temperature** | **0.054** | **0.109** | **0.006** | 0.964 | %67 | 0.966 |
+
+- Testte de hiçbir hücrenin sınıfı değişmedi. Tüm sınıflandırma metrikleri 5.10.6'daki v2 sonuçlarıyla birebir aynı
+  (hücre makro F1 0.949, görüntü 0.985 / 0.967).
+- **Risk eşikleri** kalibre olasılıklarla yeniden seçildi ve **değişmedi** (0.7591 / 0.8229; Adım 6.2). Risk skoru
+  en olası sınıfa dayanan hücre oranı olduğundan temperature onu etkilemez. Kalibrasyondan yalnızca raporda
+  gösterilen olasılıklar ve yumuşak skor yararlanır (geliştirme AUC 0.995 → 0.997).
+
 ---
 
 ## Veri Seti Kaynağı Tespiti (ALL-IDB örtüşmesi)
@@ -1462,5 +1571,215 @@ kilitli testinde (kayıtlı v2 modeli) yapıldı.
   Kaggle'da genellikle birden çok kopyası olduğundan, kaynak düzeyinde kaçırma olasılığı görüntü düzeyinden daha
   düşük. Yine de sıfır değil.
 - ALL-IDB'de AML olmadığı için dış doğrulama yalnızca ALL ve Healthy ayrımını (anormal ↔ sağlıklı) sınayabilir.
+
+---
+
+## Adım 6 — Risk Skoru ve Rapor
+
+**Ne yapıldı:**
+- `src/pipeline.py` tek bir görüntüde uçtan uca akışı çalıştırır: ön işleme → K-means (boşsa Otsu) → öznitelik →
+  sınıflandırma → risk → PDF (`python -m src.pipeline --goruntu <yol> --pdf`).
+- `src/risk_report.py` risk skorunu, seviyesini, baskın tipi ve güven bayrağını hesaplar, ReportLab ile PDF üretir.
+- `src/risk_analysis.py` iki bölümden oluşur (`python -m src.risk_analysis [analiz] [ornekler]`):
+  - `analiz`: geri dönüş etkisi, eşik seçimi, test sonuçları ve figürler. Yalnızca hücre tablolarını kullanır.
+  - `ornekler`: örnek PDF'leri üretir ve pipeline tutarlılığını kontrol eder.
+- Tüm sonuçlar v2 ayrımı (`veri_bolumu_v2.csv`) ile üretildi (Adım 5.10). İlk sürüm kalibrasyonsuz
+  `models/losemi_siniflandirici_v2.joblib` ile hazırlandı. Olasılık kalibrasyonundan (5.12) sonra analiz
+  `losemi_siniflandirici_v2_kalibre` ile tekrarlandı ve sonuçlar `_kalibre` sonekli dosyalara yazıldı
+  (ör. `outputs/risk/risk_goruntu_sonuclari_kalibre.csv`).
+  - Risk seviyeleri, eşikler, geri dönüş etkisi ve test tabloları **birebir aynı** çıktı. Temperature en olası
+    sınıfı değiştirmiyor, risk skoru da ona dayanıyor.
+  - Aşağıdaki sayılar iki model için de geçerli. Değişen yalnızca olasılıklar ve yumuşak skor.
+  - Örnek: test Healthy görüntülerinde yumuşak skorun ortalaması 0.063'ten 0.094'e çıktı, en büyük değeri
+    0.723'ten 0.592'ye indi. Lösemi görüntülerinde 1.0 yerine 0.98-0.99 civarında.
+
+### 6.1 Risk skoru
+
+- **Risk skoru** = anormal (ALL + AML) olarak sınıflanan hücre sayısı / görüntüdeki toplam hücre sayısı.
+  Kenara değen (kesik) hücreler dahildir: model onlarla da eğitildi (5.7). Ayrıca Healthy yaymalarında görüntü
+  başına 1-2 hücre olduğundan bir hücreyi atmak skoru belirsiz bırakır.
+- **Baskın lösemi tipi:** anormal hücreler arasında ALL ve AML'den sayıca fazla olanı.
+  - **Yalnızca Orta ve Yüksek riskte gösterilir**, oranıyla birlikte: "anormal hücreler içinde ALL %87,5".
+  - Düşük riskte, hücre bulunamadığında ya da anormal hücre yoksa "—" yazılır. Düşük riskteki anormal hücreler
+    çoğunlukla tek tük yanlış sınıflamalardır (ör. Healthy yaymasında AML'ye kayan 1 hücre). Onlara bir lösemi
+    tipi atamak yanıltıcı olur.
+  - Seviyeden bağımsız ham değer `compute_risk` çıktısında `baskin_tip_ham` olarak analiz için saklanır.
+- **Yumuşak skor** (ek bilgi): hücrelerin ortalama P(ALL) + P(AML) değeri. Geliştirme setinde lösemi ↔ Healthy
+  ayrımında sert skordan daha iyi ayırıyor (AUC 0.995'e karşı 0.974). Ancak proje tanımı risk skorunu hücre
+  oranı olarak belirliyor. Bu yüzden seviye sert skordan hesaplanır; yumuşak skor raporda yalnızca yanında gösterilir.
+
+### 6.2 Eşik seçimi ve gerekçesi
+
+Üç seviye kullanılır: **Düşük** < t₁ ≤ **Orta** < t₂ ≤ **Yüksek**. Hiç hücre bulunamazsa sonuç "Değerlendirilemedi" olur.
+
+- **Eşiklerin kaynağı:** yalnızca **geliştirme setinin katlar dışı** (out-of-fold) tahminleri. Her katta model diğer
+  katların K-means hücreleriyle eğitildi (son modelle aynı yapılandırma). Test seti eşik seçiminde kullanılmadı.
+- **Aday eşikler:** ardışık benzersiz skorların orta noktaları. Skor ayrık bir değer (1 hücrede 0/1, 2 hücrede
+  0/0.5/1), bu yüzden orta nokta seçmek sonucun "≥" ya da ">" seçimine bağlı kalmasını önler.
+- **Düşük/Orta (t₁):** lösemi görüntülerinin en az **%98**'i "Düşük" dışında kalmalı. Tarama aracında lösemiyi
+  "düşük risk" diye geçmek en pahalı hatadır.
+- **Orta/Yüksek (t₂):** Healthy görüntülerinin en az **%95**'i "Yüksek" dışında kalmalı. "Yüksek" denen görüntü
+  gerçekten şüpheli olmalı; yanlış alarmlar sınırlı tutulur.
+
+[esik_adaylari_gelistirme.csv](../outputs/risk/esik_adaylari_gelistirme.csv),
+[risk_esikleri.json](../outputs/risk/risk_esikleri.json)
+
+| | Değer |
+|---|---:|
+| Duyarlılık ≥ 0.98 olan en büyük eşik | 0.823 (duyarlılık 0.981) |
+| Özgüllük ≥ 0.95 olan en küçük eşik | 0.759 (özgüllük 0.952) |
+| **Seçilen: Düşük/Orta t₁** | **0.7591** |
+| **Seçilen: Orta/Yüksek t₂** | **0.8229** |
+
+- **İki koşul birbirine çarpışmadan sağlanıyor.** Özgüllük koşulunun eşiği duyarlılık koşulununkinden küçük çıktı,
+  bu yüzden ikisi yer değiştirdi (`select_thresholds`). Sonuç olarak:
+  - lösemi görüntülerinin en fazla %2'si "Düşük" olur (geliştirmede %1.0),
+  - Healthy görüntülerinin en fazla %5'i "Yüksek" olur (geliştirmede %4.8).
+- **"Orta" bandı dar (0.76-0.82).** İki dağılım iyi ayrışıyor (sert skor AUC 0.974).
+  - 0.55 ile 0.99 arasında özgüllük 0.947-0.952'de sabit. Bu aralığa düşen Healthy görüntüleri, tek hücresi
+    lösemi sayılan görüntüler; skorları 1.0'a sıçrıyor.
+  - Bu yanlış alarmları eşikle ayıklamak mümkün değil. Bu yüzden onları güven bayrağı yakalar (6.3).
+- Değerler `config.RISK_THRESHOLDS = (0.7591, 0.8229)` olarak sabitlendi.
+
+![Risk skoru dağılımı](../outputs/risk/risk_skoru_dagilimi.png)
+
+### 6.3 Güven bayrağı
+
+Aşağıdakilerden biri varsa sonuç **"düşük güvenli"** olarak işaretlenir; nedenler raporda cümle olarak yazılır.
+
+- **Hücre sayısı < 3.** 1-2 hücrede tek bir hücre hatası skoru 0'dan 0.5-1'e taşır. Adım 5'te yanlış sınıflanan
+  Healthy test görüntülerinin hepsinde 1-2 hücre vardı (v1: 9 görüntü, hepsi tek hücre; v2: 4 görüntü).
+- **Otsu geri dönüşü kullanıldı.** Model Otsu kırpımlarıyla eğitilmedi; sınır ve boyut dağılımı farklı.
+- **Hücrelerin yarısından fazlası kenara değiyor.** Kesik hücrelerde makro F1 tam hücrelerdekinden belirgin
+  biçimde düşük (0.72'ye karşı 0.92; 5.7).
+
+Test setinde görüntülerin **%43**'ü düşük güvenli çıktı (ALL 53/121, AML 9/120, Healthy 94/120).
+- Neredeyse tamamı hücre sayısından: 82 görüntüde 1 hücre, 62 görüntüde 2 hücre var.
+- Healthy yaymalarında ve ALL yakın çekimlerinde görüntü başına az lökosit bulunması veri setinin doğası.
+- Bayrak, "sonucu tek bir hücreye dayanıyor" uyarısıdır, hata değildir.
+
+### 6.4 Otsu geri dönüşünün etkisi
+
+K-means bir görüntüde hiç çekirdek bulamazsa aynı görüntüde Otsu denenir. Model yeniden eğitilmez; geri dönüş
+yalnızca çıkarımda uygulanır.
+[geri_donus_etkisi.csv](../outputs/risk/geri_donus_etkisi.csv)
+
+- **Geliştirme:** K-means 61 görüntüde hücre bulamadı. Otsu bunların 48'ini kurtardı.
+- **Test:** 13 hücresiz görüntünün **7'si kurtuldu**; hepsi Healthy.
+  - 6'sında Otsu'nun bulduğu tüm hücreler Healthy sınıflandı; bu görüntülerin risk seviyesi "Düşük".
+  - 1'inde 3 hücreden 1'i AML sınıflandı (skor 0.33); seviye yine "Düşük".
+  - Kurtulan 7 görüntünün 7'si de doğru değerlendirildi.
+- 6 görüntü hâlâ hücresiz (2 ALL, 4 Healthy) ve "Değerlendirilemedi" olarak raporlanır.
+
+| Test, görüntü düzeyi (hücresiz = hata) | Hücresiz görüntü | Kapsama | Makro F1 | Healthy duyarlılık | Anormal duyarlılık |
+|---|---:|---:|---:|---:|---:|
+| Geri dönüşsüz (yalnızca K-means; Adım 5.10) | 13 | 0.964 | 0.967 | 0.875 | 0.988 |
+| **Geri dönüşlü (K-means, boşsa Otsu)** | **6** | **0.983** | **0.977** | **0.933** | 0.988 |
+
+- Geri dönüş yalnızca Healthy'nin kaçırılmasını azaltıyor; ALL ve AML sonuçları değişmiyor. K-means'in kapsama
+  sorunu (5.4), çekirdeği az ve soluk Healthy yaymalarında yoğunlaşıyordu.
+
+### 6.5 Test seti sonuçları
+
+Kayıtlı v2 modeli ve yukarıdaki eşiklerle, v2 kilitli test seti (361 görüntü) kullanıldı.
+[risk_goruntu_sonuclari.csv](../outputs/risk/risk_goruntu_sonuclari.csv),
+[risk_seviyesi_metrikleri.csv](../outputs/risk/risk_seviyesi_metrikleri.csv)
+
+| Gerçek \ Risk seviyesi | Düşük | Orta | Yüksek | Değerlendirilemedi |
+|---|---:|---:|---:|---:|
+| **ALL** (121) | 0 | 0 | **119** | 2 |
+| **AML** (120) | 2 | 1 | **117** | 0 |
+| **Healthy** (120) | **114** | 0 | 2 | 4 |
+
+![Test risk seviyesi karışıklık matrisi](../outputs/risk/test_risk_seviyesi_karisiklik.png)
+
+| Ölçü | Geliştirme (katlar dışı) | Test |
+|---|---:|---:|
+| Lösemi görüntülerinin "Düşük" olma oranı | %1.0 | **%0.8** (2/241) |
+| Healthy görüntülerinin "Yüksek" olma oranı | %4.8 | **%1.7** (2/120) |
+| Duyarlılık @ t₁ (hücre bulunan lösemi görüntüleri) | 0.989 | 0.992 |
+| Özgüllük @ t₂ (hücre bulunan Healthy görüntüleri) | 0.952 | 0.983 |
+| Baskın tip doğruluğu (Orta/Yüksek riskli lösemi görüntüleri; 941 / 237) | 0.986 | **1.000** |
+| Değerlendirilemedi | 13 / 1.439 | 6 / 361 |
+
+- **Testte iki hedef de sağlandı.** Test sonuçları geliştirmeden biraz daha iyi; test seti küçük, farklar gürültü
+  düzeyinde.
+- **Kaçırılan lösemiler:** 2 AML görüntüsü "Düşük", 1'i "Orta". Üçünde de çok sayıda hücre var (28-34) ve güven normal.
+  - Skorları 0.39, 0.71 ve 0.76.
+  - Bu görüntülerde AML hücrelerinin bir kısmı Healthy sınıflandı. Tek hücre hatası değil, sistematik bir hata.
+  - Güven bayrağının yakalayamadığı tek hata türü bu. Tarama açısından en önemli zayıflık.
+- **Yanlış alarmlar:** "Yüksek" çıkan 2 Healthy görüntüsünün ikisi de **tek hücreli** (skor 1.0) ve düşük güvenli.
+  Güveni normal 26 Healthy görüntüsünün hepsi "Düşük".
+- **Baskın tip:** baskın tipin gösterildiği (Orta/Yüksek riskli) 237 lösemi test görüntüsünün hepsinde gerçek tiple
+  aynı (ALL ↔ AML karışması yok). Düşük çıkan 2 AML görüntüsünde baskın tip gösterilmez ("—").
+
+### 6.6 PDF rapor içeriği
+
+Her rapor A4 boyutunda; hücre sayısı fazlaysa ikinci sayfaya taşar. Bölümler:
+1. Başlık, tarih, görüntü adı ve klinik kullanım uyarısı ("araştırma ve eğitim amaçlı prototip, klinik teşhis aracı
+   değildir").
+2. Orijinal görüntü ve sınıfa göre renkli, numaralı hücre çekirdeği konturları (lejantla).
+   - Numaralar beyaz kutu içinde koyu yazıyla yazılır ve 800 px'lik görselde 0.8 ölçeklidir; PDF'te ~2.5 mm yükseklik.
+   - Kutu çerçevesi hücrenin sınıf rengindedir.
+   - Kutular birbirine çarpmayacak şekilde yerleştirilir: önce konturun üstü, sonra altı, sonra sağı denenir.
+3. **Özet kutusu:**
+   - risk skoru (anormal hücre oranı) ve risk seviyesi,
+   - baskın lösemi tipi ve oranı,
+   - sınıf başına hücre sayıları,
+   - yumuşak skor,
+   - güven durumu ve nedenleri.
+4. Hücre tablosu (en fazla 30 satır). Daha fazla hücre varsa kalanlar sınıf sayılarıyla özetlenir.
+5. **Pipeline özeti ve model bilgisi:**
+   - ön işleme adımları,
+   - kullanılan segmentasyon yöntemi (geri dönüş varsa belirtilir),
+   - tahmini eritrosit çapı,
+   - öznitelik sayısı ve model adı,
+   - kilitli test seti başarısı ve risk eşiklerinin gerekçesi.
+   - Bu değerler etkin modele göre (`config.ACTIVE_MODEL_FILE`) okunur: şu an
+     `models/losemi_siniflandirici_v2_kalibre.json`, `outputs/evaluation/test_metrikleri_v2_kalibre.csv` ve
+     `outputs/risk/risk_esikleri_kalibre.json`.
+   - Hücre tablosundaki olasılıklar kalibre edilmiştir (temperature, 5.12).
+6. Sayfa altında tekrar uyarı.
+
+**Örnek raporlar** (`reports/ornekler/`):
+- **Seçilen görüntüler:** her sınıftan güveni normal 2 görüntü ve 1 düşük güvenli görüntü. Seçim rastgele
+  (`RANDOM_STATE`) yapıldı, doğru/yanlış tahmine bakılmadı.
+- **Kaynak kısıtı:** Yalnızca kaynağı **"bilinmiyor"** olan test görüntüleri aday oldu. ALL-IDB türevleri lisans
+  gereği paylaşılamaz; `reports/ornekler/` ise repoya girer. `reports/` altındaki diğer PDF'ler `.gitignore`'da.
+- Seçim: [ornek_secimi_kalibre.csv](../outputs/risk/ornek_secimi_kalibre.csv) (kalibrasyonsuz modelle yapılan
+  seçimle aynı).
+  - ALL: `acute_lymphocytic (193)`, `(447)`.
+  - AML: `acute_myeloid (398)`, `(8)`.
+  - Healthy: `healthy_blood_cell (646)`, `(247)`.
+  - Düşük güven: `healthy_blood_cell (322)` (Otsu geri dönüşü, 3 hücre).
+- **Üretim:** `python -m src.risk_analysis ornekler`, kalibre model (`losemi_siniflandirici_v2_kalibre`) ile
+  uçtan uca pipeline'dan (~2 dk). Sonuçlar: [ornek_raporlar_kalibre.csv](../outputs/risk/ornek_raporlar_kalibre.csv).
+
+| Örnek | Hücre | Risk skoru | Seviye | Baskın tip | Güven |
+|---|---:|---:|---|---|---|
+| ALL (193) | 18 | 1.00 | Yüksek | ALL | Normal |
+| ALL (447) | 3 | 1.00 | Yüksek | ALL | Normal |
+| AML (398) | 23 | 1.00 | Yüksek | AML | Normal |
+| AML (8) | 8 | 1.00 | Yüksek | AML | Normal |
+| Healthy (646) | 4 | 0.25 | Düşük | — | Normal |
+| Healthy (247) | 3 | 0.33 | Düşük | — | Normal |
+| Düşük güven: Healthy (322) | 3 | 0.33 | Düşük | — | Düşük (Otsu geri dönüşü) |
+
+- Yedi örneğin hepsinde risk seviyesi gerçek sınıfla uyumlu. Seviyeler ve skorlar kalibrasyonsuz modelle aynı;
+  temperature en olası sınıfı değiştirmediği için bu beklenen sonuç (5.12). Değişen yalnızca hücre tablosundaki
+  olasılıklar ve yumuşak skor.
+- **Pipeline ↔ tablo tutarlılığı** (30 rastgele test görüntüsü,
+  [pipeline_tutarlilik_kalibre.csv](../outputs/risk/pipeline_tutarlilik_kalibre.csv)):
+  - Risk seviyesi %100 eşit, en büyük skor farkı 0.000.
+  - Hücre sayısı %97 eşit. Tek fark `acute_myeloid (193)`: tabloda 21, pipeline'da 22 hücre; skor ikisinde de 1.00.
+
+### 6.7 Kısıtlar
+
+- Eşikler bu veri setinin skor dağılımına göre seçildi. Başka laboratuvarın görüntülerinde skor dağılımı
+  kayabilir; eşikler dış veride yeniden doğrulanmalı.
+- Skor, görüntü düzeyi etiketlerle eğitilmiş hücre sınıflandırıcısına dayanıyor. Lösemi görüntüsündeki normal
+  lökositler de "anormal" sayılmak üzere öğrenildi, bu yüzden skor "blast oranı" değildir.
+- Çok hücreli AML görüntülerindeki sistematik hatalar (6.5) güven bayrağıyla yakalanmıyor.
+- Sistem araştırma ve eğitim amaçlı bir prototiptir; **klinik teşhis aracı değildir.**
 
 ---

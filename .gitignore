@@ -20,3 +20,11 @@ data/**
 
 # Eğitilmiş modeller
 models/*.joblib
+
+# Üretilen PDF raporlar repoya girmez; yalnızca örnekler (kaynağı ALL-IDB olmayan test görüntüleri) girer
+reports/*
+!reports/.gitkeep
+!reports/ornekler/
+
+# Yol dönüşümü öncesi CSV yedekleri
+*.bak

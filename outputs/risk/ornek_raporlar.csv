@@ -1,0 +1,8 @@
+ornek,gercek,goruntu,pdf,hucre_tablo,hucre_pipeline,skor_tablo,skor_pipeline,seviye_tablo,seviye_pipeline,baskin_tip,guven,yontem,nedenler
+ALL,ALL,acute_lymphocytic (193).jpg,ALL_ALL_acute_lymphocytic_193.pdf,18,18,1.0,1.0,Yüksek,Yüksek,ALL,Normal,kmeans,
+ALL,ALL,acute_lymphocytic (447).jpg,ALL_ALL_acute_lymphocytic_447.pdf,3,3,1.0,1.0,Yüksek,Yüksek,ALL,Normal,kmeans,
+AML,AML,acute_myeloid   (398).jpg,AML_AML_acute_myeloid_398.pdf,23,23,1.0,1.0,Yüksek,Yüksek,AML,Normal,kmeans,
+AML,AML,acute_myeloid   (8).jpg,AML_AML_acute_myeloid_8.pdf,8,8,1.0,1.0,Yüksek,Yüksek,AML,Normal,kmeans,
+Healthy,Healthy,healthy_blood_cell  (646).jpg,Healthy_Healthy_healthy_blood_cell_646.pdf,4,4,0.25,0.25,Düşük,Düşük,—,Normal,kmeans,
+Healthy,Healthy,healthy_blood_cell  (247).jpg,Healthy_Healthy_healthy_blood_cell_247.pdf,3,3,0.3333333333333333,0.3333333333333333,Düşük,Düşük,—,Normal,kmeans,
+dusuk_guven,Healthy,healthy_blood_cell  (322).jpg,dusuk_guven_Healthy_healthy_blood_cell_322.pdf,3,3,0.3333333333333333,0.3333333333333333,Düşük,Düşük,—,Düşük,otsu,K-means hücre bulamadı; Otsu geri dönüşü kullanıldı (model bu yöntemin kırpımlarıyla eğitilmedi).

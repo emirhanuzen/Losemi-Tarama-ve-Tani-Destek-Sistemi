@@ -1,0 +1,15 @@
+{
+  "skor": "anormal_oran",
+  "dusuk_orta": 0.7591,
+  "orta_yuksek": 0.8229,
+  "hedef_duyarlilik": 0.98,
+  "hedef_ozgulluk": 0.95,
+  "gelistirme_duyarlilik_dusuk_orta": 0.9894847528916929,
+  "gelistirme_ozgulluk_dusuk_orta": 0.9515789473684211,
+  "gelistirme_duyarlilik_orta_yuksek": 0.9810725552050473,
+  "gelistirme_ozgulluk_orta_yuksek": 0.9515789473684211,
+  "test_duyarlilik_dusuk_orta": 0.9916317991631799,
+  "test_ozgulluk_dusuk_orta": 0.9827586206896551,
+  "test_duyarlilik_orta_yuksek": 0.9874476987447699,
+  "test_ozgulluk_orta_yuksek": 0.9827586206896551
+}

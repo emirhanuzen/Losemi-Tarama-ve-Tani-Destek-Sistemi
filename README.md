@@ -342,6 +342,24 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+**WSL (Ubuntu) üzerinde çalıştırma.** Windows'ta Smart App Control bazı derlenmiş paketleri (ör. scikit-image
+DLL'leri) engelleyebilir. Bu durumda analizler WSL'de çalıştırılabilir. Proje Windows diskinde kalır, WSL `/mnt/c`
+üzerinden erişir. Sanal ortam ise Linux ev dizininde tutulur, çünkü Windows'taki `.venv` WSL'de çalışmaz:
+
+```bash
+cd "/mnt/c/Users/<kullanıcı>/Desktop/Losemi-Tarama-ve-Tani-Destek-Sistemi"
+python3 -m venv ~/losemi-venv           # bir kez
+source ~/losemi-venv/bin/activate
+pip install -r requirements.txt         # bir kez
+python -m src.classifier                # komutlar Windows'takiyle aynı
+```
+
+- `data/processed/` ve `outputs/` altındaki CSV'lerde yollar proje köküne göre göreli ve ileri eğik çizgilidir
+  (ör. `data/raw/ALL/acute_lymphocytic (1).jpg`). Aynı tablolar Windows'ta ve WSL'de değiştirilmeden kullanılır.
+- ALL-IDB proje dışında tutulur (lisans gereği repoya girmez). Konumu `LOSEMI_ALLIDB_DIR` ortam değişkeniyle
+  verilir, örneğin `export LOSEMI_ALLIDB_DIR=/mnt/c/Users/<kullanıcı>/Downloads`. Bu dizin `ALL_IDB1/` ve
+  `ALL_IDB2/` klasörlerini içermelidir. Değişken yoksa `src/config.py`'deki platform varsayılanı kullanılır.
+
 Veri setini [Veri seti](#veri-seti) bölümünde anlatıldığı gibi `data/raw/` altına yerleştirdikten sonra komutları
 proje kökünden sırayla çalıştırın:
 

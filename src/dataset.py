@@ -42,7 +42,7 @@ from src.config import (
     RANDOM_STATE,
     RAW_DATA_DIR,
 )
-from src.utils import load_image, save_figure
+from src.utils import load_image, save_figure, to_relative
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 
@@ -136,7 +136,7 @@ def list_images(raw_dir: Path = RAW_DATA_DIR, class_names: list[str] = CLASS_NAM
     for label in class_names:
         for path in sorted((raw_dir / label).iterdir()):
             if path.suffix.lower() in IMAGE_EXTENSIONS:
-                rows.append({"dosya_yolu": str(path), "etiket": label})
+                rows.append({"dosya_yolu": to_relative(path), "etiket": label})  # proje köküne göre göreli
     return pd.DataFrame(rows, columns=["dosya_yolu", "etiket"])
 
 

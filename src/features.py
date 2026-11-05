@@ -50,6 +50,7 @@ from src.config import (
 )
 from src.segmentation import BACKGROUND_INV_B, MASK_NUCLEUS, MASK_OTHER_NUCLEUS, MASK_PADDING
 # feature_columns utils'te: sınıflandırma modülleri görüntü işleme kütüphanelerini yüklemeden kullanabilsin
+from src.utils import resolve_path
 from src.utils import feature_columns  # noqa: F401  (src.features.feature_columns olarak da kullanılır)
 
 COLOR_CHANNELS = ["L", "a", "b", "H", "S", "V"]
@@ -61,16 +62,16 @@ COLOR_CHANNELS = ["L", "a", "b", "H", "S", "V"]
 
 def read_png(path: str, color: bool) -> np.ndarray:
     """
-    PNG dosyasını okur (Windows'ta Unicode yollar için fromfile + imdecode).
+    PNG dosyasını okur (Windows'ta Unicode yollar için fromfile + imdecode; yol resolve_path ile çözülür).
 
     Parametreler:
-        path: Dosya yolu.
+        path: Dosya yolu (göreli veya mutlak).
         color: True ise RGB, False ise tek kanal.
 
     Döndürür:
         uint8 görüntü.
     """
-    img = cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_COLOR if color else cv2.IMREAD_GRAYSCALE)
+    img = cv2.imdecode(np.fromfile(str(resolve_path(path)), np.uint8), cv2.IMREAD_COLOR if color else cv2.IMREAD_GRAYSCALE)
     return cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if color else img
 
 

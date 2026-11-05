@@ -28,7 +28,7 @@ from src.config import (
 from src.dataset import CLASS_COLORS
 from src.features import crop_features
 from src.preprocessing import preprocess
-from src.risk_report import compute_risk, generate_pdf_report
+from src.risk_report import compute_risk, dominant_label, generate_pdf_report
 from src.segmentation import METHODS, extract_cells, image_rbc_diameter
 from src.utils import load_image
 
@@ -138,18 +138,79 @@ def draw_cells(original: np.ndarray, contours: list[np.ndarray], classes: list[s
     interp = cv2.INTER_AREA if size[0] < original.shape[1] else cv2.INTER_CUBIC
     base = cv2.resize(original, size, interpolation=interp)
     overlay = base.copy()
-    thickness = max(2, round(size[0] / 400))  # 800 px'de 2 px: ince çekirdeklerde de görünür, kapatmaz
-    for k, (pts, cls) in enumerate(zip(contours, classes), start=1):
+    long_side = max(size)
+    thickness = max(2, round(long_side / 400))  # 800 px'de 2 px: ince çekirdeklerde de görünür, kapatmaz
+    # Numara etiketi: PDF'te görsel ~8.6 cm genişliğe küçülür; 800 px'de 0.8 ölçekli, 2 px kalın yazı ~2.5 mm
+    # yüksekliğe denk gelir ve basılı raporda okunur (önceki 0.45 / 1 px ~1.3 mm idi). Beyaz kutu içinde koyu
+    # yazı her zemin renginde okunur; kutunun çerçevesi hücrenin sınıf rengindedir (numara ↔ kontur eşleşmesi).
+    font_scale = 0.8 * long_side / 800
+    font_thick = max(1, round(2 * long_side / 800))
+    pad = max(2, round(4 * long_side / 800))
+    text_color = (31, 30, 28)   # koyu gri-siyah (rapor metin rengi)
+    for pts, cls in zip(contours, classes):
         color = tuple(int(CLASS_COLORS[cls][i:i + 2], 16) for i in (1, 3, 5))
         disp = ((pts - [left, top] + 0.5) * factor - 0.5).round().astype(np.int32)
         cv2.polylines(overlay, [disp.reshape(-1, 1, 2)], True, color, thickness, cv2.LINE_AA)
-        x, y = disp[:, 0].min(), disp[:, 1].min()
+    # Etiketler konturlardan sonra çizilir: komşu hücrenin konturu numaranın üstüne binmesin
+    placed: list[tuple[int, int, int, int]] = []
+    for k, (pts, cls) in enumerate(zip(contours, classes), start=1):
+        color = tuple(int(CLASS_COLORS[cls][i:i + 2], 16) for i in (1, 3, 5))
+        disp = ((pts - [left, top] + 0.5) * factor - 0.5).round().astype(np.int32)
         label = str(k)
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
-        tx, ty = int(np.clip(x, 0, size[0] - tw - 2)), int(np.clip(y - 3, th + 2, size[1] - 2))
-        cv2.rectangle(overlay, (tx - 1, ty - th - 2), (tx + tw + 1, ty + 2), (255, 255, 255), -1)
-        cv2.putText(overlay, label, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+        (tw, th), base_line = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thick)
+        tx, ty = label_position(disp, (tw, th, base_line), pad, thickness, size, placed)
+        box = (tx - pad, ty - th - pad, tx + tw + pad, ty + base_line + pad - 1)
+        placed.append(box)
+        cv2.rectangle(overlay, box[:2], box[2:], (255, 255, 255), -1)
+        cv2.rectangle(overlay, box[:2], box[2:], color, max(1, thickness - 1), cv2.LINE_AA)
+        cv2.putText(overlay, label, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_color, font_thick, cv2.LINE_AA)
     return base, overlay
+
+
+def label_position(disp: np.ndarray, text: tuple[int, int, int], pad: int, thickness: int, size: tuple[int, int],
+                   placed: list[tuple[int, int, int, int]]) -> tuple[int, int]:
+    """
+    Bir hücre numarası kutusu için, daha önce yerleştirilmiş kutularla çakışmayan bir konum seçer.
+
+    Adaylar sırayla: konturun sol üstünün üstü, sol altının altı, sağ üstünün sağı. Hepsi çakışıyorsa ilk aday
+    kutu genişliği kadar sağa (gerekirse aşağı) kaydırılır. Her aday görüntü sınırına kırpılır. Yoğun AML
+    yaymalarında da numaralar üst üste binip okunmaz hâle gelmesin diye.
+
+    Parametreler:
+        disp: Konturun gösterim koordinatlarındaki noktaları (N, 2).
+        text: (yazı genişliği, yüksekliği, taban çizgisi) — cv2.getTextSize.
+        pad: Kutu iç boşluğu (px).
+        thickness: Kontur kalınlığı (px).
+        size: Gösterim boyutu (genişlik, yükseklik).
+        placed: Önceki kutular (x0, y0, x1, y1).
+
+    Döndürür:
+        Yazının sol alt başlangıç noktası (tx, ty).
+    """
+    tw, th, base_line = text
+    x0, y0 = disp[:, 0].min(), disp[:, 1].min()
+    x1, y1 = disp[:, 0].max(), disp[:, 1].max()
+
+    def clip(tx: int, ty: int) -> tuple[int, int]:
+        return (int(np.clip(tx, pad, size[0] - tw - pad - 1)),
+                int(np.clip(ty, th + 2 * pad, size[1] - base_line - pad - 1)))
+
+    def free(tx: int, ty: int) -> bool:
+        a = (tx - pad, ty - th - pad, tx + tw + pad, ty + base_line + pad)
+        return all(a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1] for b in placed)
+
+    candidates = [clip(x0, y0 - pad - thickness), clip(x0, y1 + th + 2 * pad + thickness),
+                  clip(x1 + pad + thickness, y0 + th)]
+    for c in candidates:
+        if free(*c):
+            return c
+    tx, ty = candidates[0]
+    step_x, step_y = tw + 2 * pad + 2, th + base_line + 2 * pad + 2
+    for i in range(1, 12):
+        c = clip(tx + i * step_x, ty) if tx + i * step_x + tw + pad < size[0] else clip(tx, ty + i * step_y)
+        if free(*c):
+            return c
+    return candidates[0]
 
 
 # ---------------------------------------------------------------------------
@@ -242,8 +303,7 @@ def print_result(result: dict) -> None:
           + f", eritrosit çapı {seg['eritrosit_capi']:.1f} px, tip {seg['tip']}")
     print(f"Hücre: {r['toplam_hucre']} (ALL {c['ALL']}, AML {c['AML']}, Healthy {c['Healthy']})")
     print(f"Anormal hücre oranı: {r['anormal_oran']:.3f} (yumuşak {r['anormal_oran_yumusak']:.3f})")
-    print(f"Risk seviyesi: {r['risk_seviyesi']}, baskın tip: {r['baskin_tip']}"
-          + (f" ({r['baskin_oran']:.0%})" if r["baskin_tip"] != "-" else ""))
+    print(f"Risk seviyesi: {r['risk_seviyesi']}, baskın tip: {dominant_label(r)}")
     print(f"Güven: {r['guven']}" + "".join(f"\n  - {x}" for x in r["guven_nedenleri"]))
 
 

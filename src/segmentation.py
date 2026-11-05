@@ -47,7 +47,7 @@ from src.config import (
 )
 from src.dataset import estimate_image_type, nucleus_mask
 from src.preprocessing import preprocess
-from src.utils import load_image
+from src.utils import load_image, to_relative
 
 # Normalize edilmiş görüntüde zeminin ters b* değeri (normalizasyon zemini bu değere taşır)
 BACKGROUND_INV_B = 255 - TARGET_LAB_BACKGROUND["ortalama"][2]
@@ -516,8 +516,8 @@ def build_cell_dataset(method: str = SEGMENTATION_METHOD, out_dir: Path | None =
             save_png(cell["maske"], class_dir / f"{name}_maske.png")
             x, y, w, h = cell["kutu"]
             rows.append({
-                "hucre_id": name, "kirpim_yolu": str(class_dir / f"{name}.png"),
-                "maske_yolu": str(class_dir / f"{name}_maske.png"), "kaynak_dosya": image_row["dosya_yolu"],
+                "hucre_id": name, "kirpim_yolu": to_relative(class_dir / f"{name}.png"),
+                "maske_yolu": to_relative(class_dir / f"{name}_maske.png"), "kaynak_dosya": image_row["dosya_yolu"],
                 "goruntu_sirasi": i, "grup_id": image_row["grup_id"], "etiket": image_row["etiket"],
                 "tip": image_row["tip"], "eritrosit_capi": round(diameter, 2),
                 "eritrosit_tahmini_guvenilir": estimate["guvenilir"], "kenara_degiyor": cell["kenara_degiyor"],

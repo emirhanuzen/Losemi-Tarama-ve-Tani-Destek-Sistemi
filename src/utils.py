@@ -1,6 +1,8 @@
 """Görüntü okuma/yazma ve ara çıktı kaydetme gibi ortak yardımcı fonksiyonlar."""
 
-from pathlib import Path
+import os
+import re
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import cv2
 import matplotlib
@@ -10,7 +12,56 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from src.config import FEATURE_PREFIXES, STAGE_OUTPUT_DIRS
+from src.config import FEATURE_PREFIXES, PROJECT_ROOT, STAGE_OUTPUT_DIRS
+
+_WINDOWS_ABSOLUTE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def resolve_path(path: str | Path) -> Path:
+    """
+    CSV'den veya kullanıcıdan gelen bir yolu bu platformda açılabilecek mutlak yola çevirir.
+
+    - Göreli yol (ör. "data/raw/ALL/x.jpg" ya da ters eğik çizgili hâli) proje köküne (config.PROJECT_ROOT) eklenir.
+    - Mutlak yol bu platformun yoluysa olduğu gibi döner.
+    - Windows mutlak yolu (ör. "C:\\...\\Losemi-Tarama-ve-Tani-Destek-Sistemi\\data\\raw\\...") Windows dışında
+      açılırsa: proje klasörünün adı yolda geçiyorsa geri kalanı proje köküne eklenir (proje başka yere kopyalansa
+      da çalışır); geçmiyorsa WSL bağlama noktasına çevrilir (C:\\x → /mnt/c/x).
+
+    Parametreler:
+        path: Göreli veya mutlak yol (str veya Path).
+
+    Döndürür:
+        Mutlak Path.
+    """
+    text = str(path)
+    if _WINDOWS_ABSOLUTE.match(text) and os.name != "nt":
+        parts = PureWindowsPath(text).parts
+        if PROJECT_ROOT.name in parts:
+            rest = parts[len(parts) - parts[::-1].index(PROJECT_ROOT.name):]
+            return PROJECT_ROOT.joinpath(*rest)
+        return Path("/mnt", parts[0][0].lower(), *parts[1:])
+    # Windows dışında ters eğik çizgi ayraç değildir; göreli Windows yolları da çözülebilsin diye çevrilir
+    candidate = Path(text) if os.name == "nt" else Path(text.replace("\\", "/"))
+    return candidate if candidate.is_absolute() else PROJECT_ROOT / candidate
+
+
+def to_relative(path: str | Path) -> str:
+    """
+    Bir yolu CSV'ye yazılacak biçime getirir: proje kökü altındaysa köke göre göreli, ileri eğik çizgili.
+
+    Proje dışındaki yollar (ör. ALL-IDB) mutlak kalır, yine ileri eğik çizgiyle yazılır.
+
+    Parametreler:
+        path: Göreli veya mutlak yol.
+
+    Döndürür:
+        Ör. "data/raw/ALL/acute_lymphocytic (1).jpg".
+    """
+    full = resolve_path(path)
+    try:
+        return PurePosixPath(*full.relative_to(PROJECT_ROOT).parts).as_posix()
+    except ValueError:
+        return full.as_posix()
 
 
 def load_image(path: str | Path) -> np.ndarray:
@@ -18,15 +69,16 @@ def load_image(path: str | Path) -> np.ndarray:
     Diskteki bir görüntüyü RGB formatında okur.
 
     cv2.imread Windows'ta Türkçe/Unicode karakterli yolları okuyamadığı için dosya
-    önce bayt dizisi olarak okunur, ardından cv2.imdecode ile çözülür.
+    önce bayt dizisi olarak okunur, ardından cv2.imdecode ile çözülür. Yol resolve_path ile çözülür
+    (göreli CSV yolları ve Windows yolları her platformda açılır).
 
     Parametreler:
-        path: Görüntü dosyasının yolu.
+        path: Görüntü dosyasının yolu (göreli veya mutlak).
 
     Döndürür:
         RGB formatında (H, W, 3) uint8 numpy dizisi.
     """
-    data = np.fromfile(str(path), dtype=np.uint8)
+    data = np.fromfile(str(resolve_path(path)), dtype=np.uint8)
     bgr = cv2.imdecode(data, cv2.IMREAD_COLOR)
     if bgr is None:
         raise ValueError(f"Görüntü okunamadı: {path}")

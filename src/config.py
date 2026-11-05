@@ -1,9 +1,35 @@
 """Proje genelinde kullanılan dizin yolları ve ortak sabitler."""
 
+import os
+import platform
 from pathlib import Path
 
-# Proje kök dizini (src/ klasörünün bir üstü)
-ROOT_DIR = Path(__file__).resolve().parent.parent
+# Proje kök dizini (src/ klasörünün bir üstü). CSV'lerdeki tüm yollar bu köke göre göreli ve ileri eğik çizgilidir
+# (ör. data/raw/ALL/acute_lymphocytic (1).jpg); böylece aynı tablolar Windows'ta ve WSL'de birlikte kullanılır.
+# Okurken utils.resolve_path, yazarken utils.to_relative kullanılır.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ROOT_DIR = PROJECT_ROOT  # eski ad; mevcut modüller için
+
+
+def is_wsl() -> bool:
+    """
+    Kodun WSL (Windows Subsystem for Linux) içinde çalışıp çalışmadığını döndürür.
+
+    Döndürür:
+        Linux çekirdek sürümünde "microsoft" geçiyorsa True.
+    """
+    return platform.system() == "Linux" and "microsoft" in platform.release().lower()
+
+
+# ALL-IDB (ALL_IDB1 ve ALL_IDB2 klasörlerini içeren dizin) proje dışında tutulur: lisans gereği repoya girmez.
+# Öncelik: LOSEMI_ALLIDB_DIR ortam değişkeni; yoksa platform varsayılanı (Windows ve WSL aynı klasörü görür).
+ALLIDB_DEFAULT_DIRS = {
+    "windows": Path(r"C:\Users\Emirhan\Downloads"),
+    "wsl": Path("/mnt/c/Users/Emirhan/Downloads"),
+    "diger": PROJECT_ROOT / "data" / "external",
+}
+ALLIDB_DIR = Path(os.environ.get("LOSEMI_ALLIDB_DIR") or ALLIDB_DEFAULT_DIRS[
+    "windows" if os.name == "nt" else ("wsl" if is_wsl() else "diger")])
 
 DATA_DIR = ROOT_DIR / "data"
 RAW_DATA_DIR = DATA_DIR / "raw"
@@ -286,6 +312,21 @@ N_JOBS = 4
 # 0.952 (HGB lr 0.05 ile eşit, en yüksek). Ablasyonda "şekil + renk" 0.905, tümü 0.903: fark kat std'nin çok altında,
 # öznitelik kümesi değiştirilmedi. Model: models/losemi_siniflandirici_v2.joblib.
 CLASSIFIER_MODEL = "hgb"
+# Olasılık kalibrasyonu (python -m src.classification_analysis kalibrasyon): HGB'nin ham olasılıkları aşırı
+# kendinden emin (çoğu hücrede 1.000 / 0.000). CalibratedClassifierCV, ensemble=False: temel model tüm eğitim
+# verisiyle eğitilir, kalibratör iç katların katlar dışı tahminlerinden öğrenilir. İç katlar kaynak grubu düzeyinde
+# (StratifiedGroupKFold): aynı yaymanın türevleri hem kalibratörün eğitiminde hem tahmininde olursa olasılıklar yine
+# aşırı iyimser kalır. None: kalibrasyon yok. Seçim ve gerekçe: aşağıda CLASSIFIER_CALIBRATION.
+CALIBRATION_FOLDS = 5
+CALIBRATION_SUFFIX = "_kalibre"
+# Seçim: "temperature" (geliştirme CV, katlar dışı, 14.729 hücre; outputs/classification/kalibrasyon_v2.csv):
+# - Kalibrasyonsuz: Brier 0.114, log loss 0.366, ECE 0.051; hücrelerin %90'ında güven ≥ 0.99.
+# - Temperature: Brier 0.098, log loss 0.185, ECE 0.013; güven ≥ 0.99 %63. Tek parametre olduğu için en olası sınıf
+#   DEĞİŞMEZ (0 hücre; görüntü ortalamasında 1 görüntü), hücre/görüntü makro F1 aynı (0.903 / 0.951).
+# - Sigmoid / isotonic (ağırlıksız): Brier 0.095 (biraz daha iyi) ama hücrelerin %3.6-3.8'i AML'ye kaydı
+#   (≈ 300 ALL→AML, 230 Healthy→AML), görüntü F1 0.952 → 0.93: kalibratör AML'nin önselini (%77) geri getiriyor.
+# - Dengeli ağırlıklı sigmoid / isotonic: ters yöne kaydı (≈ 260-300 AML→Healthy), Brier 0.127-0.128 (kötüleşti).
+CLASSIFIER_CALIBRATION = "temperature"
 CLASSIFIER_PARAMS = {"learning_rate": 0.1, "max_iter": 300, "early_stopping": False}
 CLASSIFIER_FEATURE_SET = "tumu"
 # Kenara değen (kesik) hücreler EĞİTİME DAHİL. Adım 4 dışlamayı önermişti (kesik şekiller sınıfa göre
@@ -297,6 +338,12 @@ CLASSIFIER_TRAIN_EDGE_CELLS = True
 # olasılık ortalamasına girmez (görüntü F1 0.954'e karşı dahil edilince 0.948); birincil hücre
 # metrikleri kenara değmeyen hücrelerde raporlanır (kesik şekil sınıflandırmayı zorlaştırıyor).
 IMAGE_EXCLUDE_EDGE_CELLS = True
+# Etkin son model ve onun sonuç dosyalarının soneki (pipeline, risk analizi ve PDF bunları kullanır).
+# Kalibre model ayrı dosyadır; kalibrasyonsuz model ve sonuçları silinmez.
+_CAL = CALIBRATION_SUFFIX if CLASSIFIER_CALIBRATION else ""
+ACTIVE_MODEL_FILE = MODEL_FILES[SPLIT_VERSION] + _CAL          # ör. losemi_siniflandirici_v2_kalibre
+ACTIVE_EVAL_SUFFIX = RESULT_SUFFIXES[SPLIT_VERSION] + _CAL     # outputs/evaluation/test_metrikleri<sonek>.csv
+RISK_RESULT_SUFFIX = _CAL                                      # outputs/risk/<ad><sonek>.csv
 
 # ---------------------------------------------------------------------------
 # Uçtan uca pipeline, risk skoru ve PDF rapor (gerekçeler: docs/sunum_notlari.md — Adım 6,
@@ -326,7 +373,15 @@ RISK_INCLUDE_EDGE_CELLS = True
 # Değerler geliştirme setinde hesaplanıp buraya sabitlendi; test seti eşik seçiminde kullanılmadı.
 RISK_TARGET_SENSITIVITY = 0.98
 RISK_TARGET_SPECIFICITY = 0.95
-RISK_THRESHOLDS = (None, None)  # python -m src.risk_analysis ile belirlenir
+# Sonuç (v2 ayrımı, losemi_siniflandirici_v2 yapılandırması, geliştirme 1.426 hücreli görüntü):
+# - Duyarlılık ≥ 0.98 olan en büyük eşik 0.8229 (duyarlılık 0.981); özgüllük ≥ 0.95 olan en küçük eşik 0.7591
+#   (özgüllük 0.952). İkincisi birincisinden küçük → yer değiştirildi (select_thresholds): iki hedef de sağlanır.
+# - Geliştirmede: lösemi görüntülerinin %1.0'ı "Düşük", Healthy görüntülerinin %4.8'i "Yüksek".
+# - "Orta" bandı dar (0.76-0.82): skor dağılımları iyi ayrışıyor (sert skor AUC 0.974); 0.55-0.99 aralığında
+#   özgüllük 0.947-0.952'de sabit, yani bu aralıktaki Healthy görüntüleri tek hücreli yanlış alarmlar.
+# Kalibre modelle (temperature) yeniden seçildi: aynı eşikler. Risk skoru en olası sınıfa dayanan hücre oranıdır ve
+# temperature en olası sınıfı değiştirmez; yalnızca yumuşak skor iyileşti (geliştirme AUC 0.995 → 0.997).
+RISK_THRESHOLDS = (0.7591, 0.8229)  # python -m src.risk_analysis analiz ile seçildi
 RISK_LEVELS = ["Düşük", "Orta", "Yüksek"]
 RISK_NO_CELL_LEVEL = "Değerlendirilemedi"  # Geri dönüşle de hiç hücre bulunamazsa
 

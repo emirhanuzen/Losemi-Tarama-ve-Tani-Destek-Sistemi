@@ -16,6 +16,7 @@ Deneyler (model/segmentasyon karşılaştırması, ablasyon, kısayol, kenar): s
 """
 
 import json
+import warnings
 
 import joblib
 import matplotlib.pyplot as plt
@@ -38,10 +39,15 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
+from sklearn.utils.class_weight import compute_sample_weight
 from threadpoolctl import threadpool_limits
 
 from src.config import (
+    ACTIVE_EVAL_SUFFIX,
+    ACTIVE_MODEL_FILE,
+    CALIBRATION_FOLDS,
     CLASS_NAMES,
+    CLASSIFIER_CALIBRATION,
     CLASSIFIER_FEATURE_SET,
     CLASSIFIER_MODEL,
     CLASSIFIER_PARAMS,
@@ -66,8 +72,10 @@ from src.dataset import SURFACE, TEXT_PRIMARY, TEXT_SECONDARY
 from src.utils import feature_columns, save_figure, stage_dir
 
 NO_CELL = "Hücre yok"   # Hiç çekirdek bulunamayan görüntünün görüntü düzeyi "tahmini"
-MODEL_FILE = MODEL_FILES[SPLIT_VERSION]   # Etkin ayrımın son modeli (v2: sızıntısız kaynak grupları)
-SUFFIX = RESULT_SUFFIXES[SPLIT_VERSION]   # Çıktı dosyası soneki (v1 sonuçlarının üzerine yazılmaz)
+MODEL_FILE = ACTIVE_MODEL_FILE           # Etkin son model (v2 ayrımı; kalibrasyon varsa "_kalibre" sürümü)
+SUFFIX = RESULT_SUFFIXES[SPLIT_VERSION]   # Deney çıktısı soneki (v1 sonuçlarının üzerine yazılmaz)
+EVAL_SUFFIX = ACTIVE_EVAL_SUFFIX         # Son model test çıktısı soneki (ör. _v2_kalibre)
+GROUP_COLUMN = SPLIT_GROUP_COLUMNS[SPLIT_VERSION]  # Kalibrasyonun iç katları bu grup sütunuyla kurulur
 
 # Model adları (sunum ve tablolar için) → oluşturucu. Parametre ızgaraları classification_analysis'te.
 MODEL_NAMES = {
@@ -281,8 +289,47 @@ def train_models(X: pd.DataFrame, y: np.ndarray) -> dict:
     return models
 
 
+def fit_model(X: np.ndarray, y: np.ndarray, groups: np.ndarray, name: str, params: dict | None = None,
+              calibration: str | None = None):
+    """
+    Bir modeli eğitir; istenirse olasılıklarını kaynak grubu düzeyinde çapraz doğrulamayla kalibre eder.
+
+    Kalibrasyon: CalibratedClassifierCV(ensemble=False). Temel model (build_model) TÜM eğitim verisiyle eğitilir;
+    kalibratör (sigmoid: Platt, isotonic: monoton basamak fonksiyonu) iç katların katlar dışı olasılıklarından
+    öğrenilir. İç katlar StratifiedGroupKFold ile grup (kaynak_grup_id) düzeyinde kurulur ve cv'ye açık indeks
+    listesi olarak verilir: aynı yaymanın türevleri hem kalibratörü eğiten hem tahmin edilen tarafta olsaydı
+    katlar dışı olasılıklar da aşırı iyimser kalır, kalibrasyon işe yaramazdı.
+
+    Parametreler:
+        X, y: Eğitim öznitelikleri ve etiketleri.
+        groups: Her satırın grubu (kalibrasyon iç katları için; kalibrasyon yoksa kullanılmaz).
+        name, params: Model adı ve hiperparametreleri (build_model).
+        calibration: None veya "<yöntem>[_dengeli]"; yöntem "sigmoid", "isotonic" ya da "temperature".
+            "_dengeli": kalibratör dengeli sınıf ağırlıklarıyla öğrenilir (sample_weight yalnızca kalibratöre
+            gider; temel model zaten class_weight="balanced"). Ağırlıksız kalibratör, hücrelerin %77'sini oluşturan
+            AML'nin önselini geri getirip balanced modelin kararlarını AML'ye kaydırır (kalibrasyon deneyi).
+            "temperature": tek bir sıcaklık parametresiyle olasılıkları yumuşatır; en olası sınıf değişmez.
+
+    Döndürür:
+        Eğitilmiş model (predict_proba ve classes_ ile).
+    """
+    base = build_model(name, params)
+    if not calibration:
+        return base.fit(X, y)
+    method, _, variant = calibration.partition("_")
+    weight = compute_sample_weight("balanced", y) if variant == "dengeli" else None
+    inner = StratifiedGroupKFold(n_splits=CALIBRATION_FOLDS, shuffle=True, random_state=RANDOM_STATE)
+    splits = list(inner.split(X, y, groups))
+    model = CalibratedClassifierCV(base, method=method, cv=splits, ensemble=False)
+    with warnings.catch_warnings():
+        # Pipeline sample_weight almaz → ağırlık yalnızca kalibratöre gider (istenen davranış; uyarı gereksiz)
+        warnings.filterwarnings("ignore", message=".*does not appear to accept sample_weight.*")
+        warnings.filterwarnings("ignore", message=".*sample_weight.*only be used for the calibration.*")
+        return model.fit(X, y, sample_weight=weight)
+
+
 def out_of_fold_proba(cells: pd.DataFrame, features: list[str], name: str, params: dict | None = None,
-                      train_mask: pd.Series | None = None) -> np.ndarray:
+                      train_mask: pd.Series | None = None, calibration: str | None = None) -> np.ndarray:
     """
     Geliştirme setinde sabit katlarla katlar dışı (out-of-fold) sınıf olasılıklarını hesaplar.
 
@@ -295,11 +342,13 @@ def out_of_fold_proba(cells: pd.DataFrame, features: list[str], name: str, param
         name: Model adı.
         params: Model hiperparametreleri.
         train_mask: Eğitime girebilecek hücreler (ör. kenara değmeyenler); None → tümü.
+        calibration: None, "sigmoid" veya "isotonic" (fit_model; iç katlar GROUP_COLUMN ile).
 
     Döndürür:
         (hücre sayısı, 3) olasılık dizisi; sütun sırası CLASS_NAMES.
     """
     proba = np.full((len(cells), len(CLASS_NAMES)), np.nan)
+    groups = cells[GROUP_COLUMN].to_numpy()
     allowed = np.ones(len(cells), bool) if train_mask is None else train_mask.to_numpy(bool)
     X = cells[features].to_numpy(np.float64)
     y = cells["etiket"].to_numpy()
@@ -308,7 +357,7 @@ def out_of_fold_proba(cells: pd.DataFrame, features: list[str], name: str, param
         for fold in range(CV_FOLDS):
             train = (folds != fold) & allowed
             test = folds == fold
-            model = build_model(name, params).fit(X[train], y[train])
+            model = fit_model(X[train], y[train], groups[train], name, params, calibration)
             proba[test] = reorder_proba(model, model.predict_proba(X[test]))
     return proba
 
@@ -591,12 +640,13 @@ def plot_test_results(cell_metrics: dict, img_metrics: dict, per_type: pd.DataFr
                    f"Hücre düzeyi (n={cell_metrics['n']}, makro F1 {cell_metrics['makro_f1']:.2f})")
     draw_confusion(axes[1], img_metrics["karisiklik"], CLASS_NAMES,
                    f"Görüntü düzeyi (n={img_metrics['n']}, makro F1 {img_metrics['makro_f1']:.2f})")
-    fig.suptitle(f"Kilitli test seti ({SPLIT_VERSION})", color=TEXT_PRIMARY, fontsize=11)
+    cal = f", {CLASSIFIER_CALIBRATION} kalibrasyonlu" if CLASSIFIER_CALIBRATION else ""
+    fig.suptitle(f"Kilitli test seti ({SPLIT_VERSION}{cal})", color=TEXT_PRIMARY, fontsize=11)
     fig.tight_layout()
-    save_figure(fig, "evaluation", f"test_karisiklik_matrisleri{SUFFIX}")
-    plot_confusion_matrix(cell_metrics["karisiklik"], CLASS_NAMES, f"test_karisiklik_hucre{SUFFIX}",
+    save_figure(fig, "evaluation", f"test_karisiklik_matrisleri{EVAL_SUFFIX}")
+    plot_confusion_matrix(cell_metrics["karisiklik"], CLASS_NAMES, f"test_karisiklik_hucre{EVAL_SUFFIX}",
                           "Test — hücre düzeyi")
-    plot_confusion_matrix(img_metrics["karisiklik"], CLASS_NAMES, f"test_karisiklik_goruntu{SUFFIX}",
+    plot_confusion_matrix(img_metrics["karisiklik"], CLASS_NAMES, f"test_karisiklik_goruntu{EVAL_SUFFIX}",
                           "Test — görüntü düzeyi")
 
 
@@ -613,17 +663,19 @@ def main() -> None:
     test = cells[cells["bolum"] == "test"].reset_index(drop=True)
     train = dev if CLASSIFIER_TRAIN_EDGE_CELLS else dev[~dev["meta_kenara_degiyor"]]
     print(f"Model: {MODEL_NAMES[CLASSIFIER_MODEL]} {CLASSIFIER_PARAMS}, öznitelik: {CLASSIFIER_FEATURE_SET} "
-          f"({len(columns)}), yöntem: {SEGMENTATION_METHOD}, eğitim hücresi: {len(train)}")
+          f"({len(columns)}), yöntem: {SEGMENTATION_METHOD}, eğitim hücresi: {len(train)}, "
+          f"kalibrasyon: {CLASSIFIER_CALIBRATION or 'yok'} → {MODEL_FILE}")
 
-    model = build_model(CLASSIFIER_MODEL, CLASSIFIER_PARAMS)
     with threadpool_limits(limits=N_JOBS):
-        model.fit(train[columns].to_numpy(np.float64), train["etiket"].to_numpy())
+        model = fit_model(train[columns].to_numpy(np.float64), train["etiket"].to_numpy(),
+                          train[GROUP_COLUMN].to_numpy(), CLASSIFIER_MODEL, CLASSIFIER_PARAMS, CLASSIFIER_CALIBRATION)
         proba = reorder_proba(model, model.predict_proba(test[columns].to_numpy(np.float64)))
     save_model(model, MODEL_FILE, {
         "model": CLASSIFIER_MODEL, "parametreler": CLASSIFIER_PARAMS, "oznitelikler": columns,
         "siniflar": CLASS_NAMES, "segmentasyon": SEGMENTATION_METHOD, "oznitelik_kumesi": CLASSIFIER_FEATURE_SET,
         "kenar_hucreleri_egitimde": CLASSIFIER_TRAIN_EDGE_CELLS, "egitim_hucre_sayisi": int(len(train)),
         "veri_ayrimi": SPLIT_VERSION, "veri_ayrimi_dosyasi": SPLIT_CSVS[SPLIT_VERSION].name,
+        "kalibrasyon": CLASSIFIER_CALIBRATION, "kalibrasyon_ic_kat": CALIBRATION_FOLDS if CLASSIFIER_CALIBRATION else None,
     })
 
     test_images = split[split["bolum"] == "test"]
@@ -633,7 +685,7 @@ def main() -> None:
     cell_m = label_metrics(y_cell[inner], pred_cell[inner])
     cell_all = label_metrics(y_cell, pred_cell)
     img = aggregate_images(test, proba, test_images)
-    img.to_csv(out_dir / f"test_goruntu_tahminleri{SUFFIX}.csv", index=False, encoding="utf-8")
+    img.to_csv(out_dir / f"test_goruntu_tahminleri{EVAL_SUFFIX}.csv", index=False, encoding="utf-8")
     covered = img[img["tahmin"] != NO_CELL]
     img_m = label_metrics(covered["etiket"].to_numpy(), covered["tahmin"].to_numpy())
     img_all = label_metrics(img["etiket"].to_numpy(), img["tahmin"].to_numpy())
@@ -653,7 +705,7 @@ def main() -> None:
             m = label_metrics(covered.loc[isel, "etiket"].to_numpy(), covered.loc[isel, "tahmin"].to_numpy())
             per_type.append({"duzey": f"goruntu ({tip})", **{k: v for k, v in m.items() if k != "karisiklik"}})
     table = pd.DataFrame(rows + per_type)
-    table.to_csv(out_dir / f"test_metrikleri{SUFFIX}.csv", index=False, encoding="utf-8")
+    table.to_csv(out_dir / f"test_metrikleri{EVAL_SUFFIX}.csv", index=False, encoding="utf-8")
     plot_test_results(cell_m, img_m, pd.DataFrame(per_type))
 
     cols = ["duzey", "n", "dogruluk", "dengeli_dogruluk", "makro_f1"] + [f"duyarlilik_{c}" for c in CLASS_NAMES] \

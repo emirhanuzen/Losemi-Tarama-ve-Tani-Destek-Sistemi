@@ -35,6 +35,8 @@ from src.config import (
     CLASS_NAMES,
     LOW_CONFIDENCE_EDGE_FRACTION,
     LOW_CONFIDENCE_MIN_CELLS,
+    ACTIVE_EVAL_SUFFIX,
+    ACTIVE_MODEL_FILE,
     MODELS_DIR,
     REPORT_DISCLAIMER,
     REPORT_MAX_CELL_ROWS,
@@ -45,12 +47,18 @@ from src.config import (
     RISK_TARGET_SENSITIVITY,
     RISK_TARGET_SPECIFICITY,
     RISK_THRESHOLDS,
+    RISK_RESULT_SUFFIX,
     SEGMENTATION_METHOD,
     STAGE_OUTPUT_DIRS,
 )
 from src.dataset import CLASS_COLORS
 
 PROBA_COLUMNS = [f"p_{c}" for c in CLASS_NAMES]
+# Baskın tip gösterilmediğinde yazılan değer: anormal hücre yok ya da risk seviyesi Düşük / Değerlendirilemedi.
+NO_DOMINANT = "—"
+# Baskın tip yalnızca bu seviyelerde gösterilir. Düşük riskte anormal hücreler çoğunlukla tek tük yanlış
+# sınıflamalardır (ör. Healthy görüntüsünde 1 hücre); onlara bir lösemi tipi atamak yanıltıcı olur.
+DOMINANT_LEVELS = ("Orta", "Yüksek")
 METHOD_NAMES = {"kmeans": "K-means", "otsu": "Otsu", "watershed": "Watershed"}
 MODEL_TITLES = {"hgb": "Gradyan artırma (HistGradientBoosting)", "svm": "SVM (RBF)", "rf": "Random Forest",
                 "knn": "k-NN", "lojistik": "Lojistik regresyon"}
@@ -90,11 +98,11 @@ def dominant_type(cells: pd.DataFrame) -> tuple[str, float]:
         cells: "sinif" ve p_ALL, p_AML sütunlu hücre tablosu.
 
     Döndürür:
-        (tip, pay): tip "ALL"/"AML" (anormal hücre yoksa "-"), pay = o tipteki hücre / anormal hücre.
+        (tip, pay): tip "ALL"/"AML" (anormal hücre yoksa NO_DOMINANT), pay = o tipteki hücre / anormal hücre.
     """
     abnormal = cells[cells["sinif"].isin(ABNORMAL_CLASSES)]
     if abnormal.empty:
-        return "-", float("nan")
+        return NO_DOMINANT, float("nan")
     counts = abnormal["sinif"].value_counts().reindex(ABNORMAL_CLASSES, fill_value=0)
     if counts["ALL"] != counts["AML"]:
         winner = counts.idxmax()
@@ -144,8 +152,10 @@ def compute_risk(cells: pd.DataFrame, method: str = SEGMENTATION_METHOD, fallbac
     Döndürür:
         {toplam_hucre, hucre_sayilari {sınıf: sayı}, anormal_hucre, anormal_oran (risk skoru),
          anormal_oran_yumusak, baskin_tip, baskin_oran, baskin_tip_yumusak, baskin_oran_yumusak,
-         risk_seviyesi, guven ("Normal"/"Düşük"), guven_nedenleri, kenar_orani,
+         baskin_tip_ham, baskin_oran_ham, risk_seviyesi, guven ("Normal"/"Düşük"), guven_nedenleri, kenar_orani,
          segmentasyon_yontemi, geri_donus, esikler} sözlüğü.
+        baskin_tip / baskin_oran (ve yumuşak hâlleri) yalnızca risk seviyesi Orta veya Yüksekse doludur; aksi hâlde
+        NO_DOMINANT / NaN. Seviyeden bağımsız ham değer baskin_tip_ham / baskin_oran_ham'dadır (analiz için).
     """
     used = cells if RISK_INCLUDE_EDGE_CELLS else cells[~cells["kenara_degiyor"].astype(bool)]
     n = len(used)
@@ -156,15 +166,20 @@ def compute_risk(cells: pd.DataFrame, method: str = SEGMENTATION_METHOD, fallbac
     dom, dom_share = dominant_type(used)
     # Yumuşak baskın tip: tüm hücrelerin ortalama P(ALL) ve P(AML)'sinin birbirine oranı
     p_all, p_aml = (float(used["p_ALL"].mean()), float(used["p_AML"].mean())) if n else (0.0, 0.0)
-    soft_dom = "-" if p_all + p_aml == 0 else ("ALL" if p_all >= p_aml else "AML")
+    soft_dom = NO_DOMINANT if p_all + p_aml == 0 else ("ALL" if p_all >= p_aml else "AML")
     soft_share = max(p_all, p_aml) / (p_all + p_aml) if p_all + p_aml > 0 else float("nan")
     edge_fraction = float(cells["kenara_degiyor"].astype(bool).mean()) if len(cells) else 0.0
     reasons = confidence_flags(n, fallback, edge_fraction)
+    level = risk_level(hard, thresholds)
+    show = level in DOMINANT_LEVELS   # Düşük / Değerlendirilemedi / eşiksiz: baskın tip gösterilmez
     return {
         "toplam_hucre": n, "hucre_sayilari": counts, "anormal_hucre": n_abnormal,
         "anormal_oran": hard, "anormal_oran_yumusak": soft,
-        "baskin_tip": dom, "baskin_oran": dom_share, "baskin_tip_yumusak": soft_dom, "baskin_oran_yumusak": soft_share,
-        "risk_seviyesi": risk_level(hard, thresholds),
+        "baskin_tip": dom if show else NO_DOMINANT, "baskin_oran": dom_share if show else float("nan"),
+        "baskin_tip_yumusak": soft_dom if show else NO_DOMINANT,
+        "baskin_oran_yumusak": soft_share if show else float("nan"),
+        "baskin_tip_ham": dom, "baskin_oran_ham": dom_share,
+        "risk_seviyesi": level,
         "guven": "Düşük" if reasons else "Normal", "guven_nedenleri": reasons, "kenar_orani": edge_fraction,
         "segmentasyon_yontemi": method, "geri_donus": fallback, "esikler": tuple(thresholds),
     }
@@ -178,26 +193,27 @@ def model_summary() -> dict:
     """
     Kayıtlı modelin adını ve kilitli test seti metriklerini okur (PDF'teki model bilgisi için).
 
-    Kaynaklar: models/losemi_siniflandirici.json (Adım 5), outputs/evaluation/test_metrikleri.csv
-    (Adım 5 test), outputs/risk/risk_esikleri.json (Adım 6 eşik seçimi). Dosya yoksa ilgili alan boş kalır.
+    Kaynaklar etkin modele göre seçilir (config.ACTIVE_MODEL_FILE: ayrım sürümü + kalibrasyon):
+    models/<ACTIVE_MODEL_FILE>.json, outputs/evaluation/test_metrikleri<ACTIVE_EVAL_SUFFIX>.csv ve
+    outputs/risk/risk_esikleri<RISK_RESULT_SUFFIX>.json (Adım 6 eşik seçimi). Dosya yoksa ilgili alan boş kalır.
 
     Döndürür:
         {model, oznitelik_sayisi, segmentasyon, test: {düzey: metrikler}, esik: {...}} sözlüğü.
     """
     out = {"model": "-", "oznitelik_sayisi": 0, "segmentasyon": SEGMENTATION_METHOD, "test": {}, "esik": {}}
-    meta_path = MODELS_DIR / "losemi_siniflandirici.json"
+    meta_path = MODELS_DIR / f"{ACTIVE_MODEL_FILE}.json"
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         out["model"] = MODEL_TITLES.get(meta.get("model"), meta.get("model", "-"))
         out["oznitelik_sayisi"] = len(meta.get("oznitelikler", []))
         out["segmentasyon"] = meta.get("segmentasyon", SEGMENTATION_METHOD)
-    test_path = STAGE_OUTPUT_DIRS["evaluation"] / "test_metrikleri.csv"
+    test_path = STAGE_OUTPUT_DIRS["evaluation"] / f"test_metrikleri{ACTIVE_EVAL_SUFFIX}.csv"
     if test_path.exists():
         table = pd.read_csv(test_path).set_index("duzey")
         for key, row in [("hucre", "hucre (kenara degmeyen)"), ("goruntu", "goruntu (hucre bulunan)")]:
             if row in table.index:
                 out["test"][key] = table.loc[row].to_dict()
-    thr_path = STAGE_OUTPUT_DIRS["risk"] / "risk_esikleri.json"
+    thr_path = STAGE_OUTPUT_DIRS["risk"] / f"risk_esikleri{RISK_RESULT_SUFFIX}.json"
     if thr_path.exists():
         out["esik"] = json.loads(thr_path.read_text(encoding="utf-8"))
     return out
@@ -256,6 +272,21 @@ def fmt_pct(x: float) -> str:
         Biçimlenmiş metin; NaN için "-".
     """
     return "-" if x is None or np.isnan(x) else f"%{100 * x:.1f}".replace(".", ",")
+
+
+def dominant_label(risk: dict) -> str:
+    """
+    Baskın lösemi tipinin rapor ve arayüzde gösterilecek metnini üretir (tek biçim, her yerde aynı).
+
+    Parametreler:
+        risk: compute_risk çıktısı.
+
+    Döndürür:
+        Orta/Yüksek riskte "anormal hücreler içinde ALL %87,5"; diğer durumlarda NO_DOMINANT ("—").
+    """
+    if risk["baskin_tip"] == NO_DOMINANT:
+        return NO_DOMINANT
+    return f"anormal hücreler içinde {risk['baskin_tip']} {fmt_pct(risk['baskin_oran'])}"
 
 
 def fmt_num(x: float, digits: int = 3) -> str:
@@ -326,7 +357,7 @@ def summary_table(risk: dict, styles: dict) -> Table:
         platypus Table.
     """
     counts = risk["hucre_sayilari"]
-    dom = "-" if risk["baskin_tip"] == "-" else f"{risk['baskin_tip']} (anormal hücrelerin {fmt_pct(risk['baskin_oran'])})"
+    dom = dominant_label(risk)
     reasons = "<br/>".join(f"• {r}" for r in risk["guven_nedenleri"]) or "Güven bayrağı yok."
     level_colors = {"Düşük": "#1baf7a", "Orta": "#d9a400", "Yüksek": "#c0392b", RISK_NO_CELL_LEVEL: "#52514e"}
     level = f"<font color='{level_colors[risk['risk_seviyesi']]}'><b>{risk['risk_seviyesi']}</b></font>"

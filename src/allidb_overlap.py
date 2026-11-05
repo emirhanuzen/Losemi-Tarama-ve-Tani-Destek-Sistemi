@@ -26,7 +26,9 @@ Yöntem (Adım 1'deki kopya tespitinin genişletilmiş hâli; döndürme, aynala
 Negatif kontrol: ALL-IDB'de AML yok; AML görüntülerinin eşleşmesi yanlış pozitif demektir.
 
 Çalıştırma (proje kökünden):
-    python -m src.allidb_overlap --allidb-dir <ALL_IDB1 ve ALL_IDB2 klasörlerini içeren dizin>
+    python -m src.allidb_overlap [--allidb-dir <ALL_IDB1 ve ALL_IDB2 klasörlerini içeren dizin>]
+    (varsayılan config.ALLIDB_DIR: LOSEMI_ALLIDB_DIR ortam değişkeni; yoksa Windows C:/Users/Emirhan/Downloads,
+    WSL /mnt/c/Users/Emirhan/Downloads)
 """
 
 import argparse
@@ -41,7 +43,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
-from src.config import DATA_DIR, DATASET_INDEX_CSV, N_JOBS, PROCESSED_DATA_DIR, SPLIT_CSV
+from src.config import ALLIDB_DIR, DATASET_INDEX_CSV, N_JOBS, PROCESSED_DATA_DIR, SPLIT_CSV
 from src.dataset import (
     BLACK_PIXEL_THRESHOLD,
     HASH_CANDIDATE_DISTANCE,
@@ -59,7 +61,7 @@ from src.dataset import (
 )
 from src.utils import load_image
 
-ALLIDB_DEFAULT_DIR = DATA_DIR / "external"
+ALLIDB_DEFAULT_DIR = ALLIDB_DIR   # config: LOSEMI_ALLIDB_DIR ortam değişkeni veya platform varsayılanı
 MATCH_CSV = PROCESSED_DATA_DIR / "allidb_eslesme.csv"
 STATUS_CSV = PROCESSED_DATA_DIR / "allidb_goruntu_durumu.csv"
 FIGURE_PATH = PROCESSED_DATA_DIR / "allidb_eslesme_ornekleri.png"
@@ -955,7 +957,7 @@ def main() -> None:
     """Örtüşmeyi ölçer, eşleşme listesini ve ALL-IDB durum tablosunu kaydeder, özetleri yazdırır."""
     parser = argparse.ArgumentParser(description="Kaggle ↔ ALL-IDB örtüşme analizi")
     parser.add_argument("--allidb-dir", default=str(ALLIDB_DEFAULT_DIR),
-                        help="ALL_IDB1 ve ALL_IDB2 klasörlerini içeren dizin (varsayılan data/external)")
+                        help="ALL_IDB1 ve ALL_IDB2 klasörlerini içeren dizin (varsayılan config.ALLIDB_DIR; LOSEMI_ALLIDB_DIR ile değiştirilebilir)")
     parser.add_argument("--rapor", action="store_true",
                         help="Yeniden hesaplamadan kayıtlı CSV'lerden özet ve figür üret")
     args = parser.parse_args()
