@@ -327,7 +327,8 @@ karşı 0.922). Yani model yayma görüntülerinde büyütme ipucuna dayanmıyor
 - Farklı laboratuvar ve mikroskoplardan gelen verilerle dış doğrulama.
 - Hücre düzeyinde etiketlenmiş veriyle eğitim ve değerlendirme.
 - Elle işaretlenmiş çekirdek maskeleriyle segmentasyonun doğrudan ölçülmesi.
-- K-means hücre bulamadığında Otsu'ya geri dönülmesi; hücre sayısı az olan görüntülerin düşük güvenle işaretlenmesi.
+- Kapsama sorununun segmentasyon tarafında çözülmesi. Şu an K-means hücre bulamazsa Otsu'ya geri dönülüyor ve az
+  hücreli görüntüler düşük güvenle işaretleniyor; ancak model Otsu kırpımlarıyla eğitilmedi.
 
 ## Kurulum ve kullanım
 
@@ -376,25 +377,59 @@ python -m src.source_groups            # kaynak grupları + sızıntısız kilit
 python -m src.classification_analysis  # model/segmentasyon karşılaştırması, ablasyon, kısayol (outputs/classification/)
 python -m src.classifier               # son model (models/) ve kilitli test seti değerlendirmesi (outputs/evaluation/)
 python -m src.leakage_analysis         # eski modelin temiz değerlendirmesi, kaynak kısayolu testi, karşılaştırma
+python -m src.risk_analysis            # risk eşikleri (outputs/risk/) ve örnek PDF raporlar (reports/ornekler/)
+python -m src.pipeline --goruntu <yol> --pdf   # tek görüntü: uçtan uca analiz ve PDF rapor (reports/)
+python -m tests.test_arayuz            # arayüz testi: tüm sayfalar, 7 hazır örnek, PDF indirme
 ```
 
-> **Geliştirme aşamasında:** Risk skoru, PDF rapor (`src/risk_report.py`), uçtan uca pipeline (`src/pipeline.py`)
-> ve Streamlit arayüzü (`streamlit run app/streamlit_app.py`) henüz tamamlanmadı.
+### Arayüz
+
+Streamlit arayüzü pipeline'ın her aşamasını gösterir. WSL'de başlatmak için (`losemi` kısayolu proje klasörüne
+geçip sanal ortamı etkinleştirir):
+
+```bash
+# ~/.bashrc içinde bir kez tanımlanır:
+alias losemi='cd /mnt/c/Users/<kullanıcı>/Desktop/Losemi-Tarama-ve-Tani-Destek-Sistemi && source ~/losemi-venv/bin/activate'
+
+losemi
+streamlit run app/streamlit_app.py
+```
+
+Ardından Windows'taki tarayıcıda **http://localhost:8501** açılır. Durdurmak için terminalde `Ctrl+C`.
+
+| Sayfa | İçerik |
+|---|---|
+| **Analiz** | Görüntü yükleme (JPG, PNG, TIF) veya 7 hazır örnekten seçim; ön işleme, segmentasyon (üç yöntemin karşılaştırması dahil), hücre ızgarası (seçilen hücrenin öznitelikleri ve sınıf olasılıkları), sonuç ve PDF rapor indirme |
+| **Model Performansı** | Model karşılaştırması, kilitli test, risk seviyesi, ablasyon, öğrenme eğrisi, kalibrasyon ve sızıntı düzeltmesi |
+| **Yöntem** | Akış şeması ve ön işleme, segmentasyon ve öznitelik aşamalarının karşılaştırma figürleri |
+| **Hakkında** | Proje özeti, veri kaynakları, kısıtlar ve kaynakça |
+
+![Analiz sayfası](docs/ekranlar/analiz_sonuc.png)
+*Analiz sayfası: sınıf renkli hücre konturları, risk seviyesi ve baskın lösemi tipi.*
+
+![Hücre ayrıntısı](docs/ekranlar/analiz_hucreler.png)
+*Hücre ızgarası ve seçilen hücrenin öznitelikleri ile sınıf olasılıkları.*
+
+![Model performansı](docs/ekranlar/performans.png)
+*Model performansı sayfası.*
 
 ## Proje yapısı
 
 ```
 ├── app/
-│   └── streamlit_app.py         Streamlit arayüzü (geliştirme aşamasında)
+│   ├── streamlit_app.py         Streamlit arayüzü (giriş noktası, sayfa gezinmesi)
+│   ├── sayfa_*.py               Analiz, Model Performansı, Yöntem, Hakkında sayfaları
+│   └── ortak.py                 Önbellekli analiz, PDF, görsel ve tablo yardımcıları
 ├── data/
 │   ├── raw/                     Ham görüntüler (repoya eklenmez)
 │   └── processed/               İndeksler, hücre kırpımları, öznitelik tabloları, veri ayrımı
 ├── docs/
-│   └── sunum_notlari.md         Her adımın ayrıntılı yöntem ve sonuç notları
+│   ├── sunum_notlari.md         Her adımın ayrıntılı yöntem ve sonuç notları
+│   └── ekranlar/                Arayüz ekran görüntüleri
 ├── models/                      Eğitilmiş model (.joblib, repoya eklenmez) ve meta verisi (.json)
 ├── notebooks/                   Deneme notebook'ları
 ├── outputs/<aşama>/             Her aşamanın figürleri ve sonuç tabloları
-├── reports/                     Üretilen PDF raporlar
+├── reports/                     Üretilen PDF raporlar (ornekler/: 7 örnek rapor)
 ├── src/
 │   ├── config.py                Yollar ve tüm parametreler (seçim gerekçeleriyle)
 │   ├── utils.py                 Görüntü okuma, figür kaydetme
@@ -410,8 +445,12 @@ python -m src.leakage_analysis         # eski modelin temiz değerlendirmesi, ka
 │   ├── allidb_overlap.py        Kaggle ↔ ALL-IDB kaynak tespiti
 │   ├── source_groups.py         Kaynak grupları (kaynak_grup_id) ve sızıntısız kilitli ayrım
 │   ├── leakage_analysis.py      Eski modelin temiz değerlendirmesi, kaynak kısayolu testi
-│   ├── risk_report.py           Risk skoru ve PDF rapor (geliştirme aşamasında)
-│   └── pipeline.py              Uçtan uca pipeline (geliştirme aşamasında)
+│   ├── risk_report.py           Risk skoru, risk seviyesi, güven bayrağı ve PDF rapor
+│   ├── risk_analysis.py         Risk eşiklerinin seçimi, örnek raporlar, pipeline tutarlılık kontrolü
+│   └── pipeline.py              Uçtan uca pipeline (tek görüntü → risk ve PDF)
+├── tests/
+│   └── test_arayuz.py           Arayüz testi (streamlit AppTest)
+├── .streamlit/config.toml       Arayüz teması ve sunucu ayarları
 └── requirements.txt
 ```
 

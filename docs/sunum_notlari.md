@@ -1783,3 +1783,107 @@ Her rapor A4 boyutunda; hücre sayısı fazlaysa ikinci sayfaya taşar. Bölüml
 - Sistem araştırma ve eğitim amaçlı bir prototiptir; **klinik teşhis aracı değildir.**
 
 ---
+
+## Adım 7 — Arayüz
+
+### 7.1 Ne yapıldı
+
+- `app/streamlit_app.py`: Streamlit arayüzü, `st.navigation` ile dört sayfa. Arayüz Türkçe.
+  - `app/sayfa_analiz.py`, `app/sayfa_performans.py`, `app/sayfa_yontem.py`, `app/sayfa_hakkinda.py`: sayfalar.
+  - `app/ortak.py`: önbellekli analiz, PDF, Türkçe öznitelik adları, rozet ve lejant bileşenleri.
+- **Yeni algoritma yok.** Analiz `src/pipeline.run_pipeline`, rapor `src/risk_report.generate_pdf_report` ile
+  yapılır; model kalibre `losemi_siniflandirici_v2_kalibre`. `run_pipeline`'a yalnızca isteğe bağlı bir `progress`
+  geri çağrısı eklendi (hesaplamayı etkilemez).
+- `.streamlit/config.toml`: tema (PDF raporla aynı zemin ve yazı renkleri), port 8501, 50 MB yükleme sınırı.
+- `tests/test_arayuz.py`: `streamlit.testing.v1.AppTest` ile uçtan uca test (tarayıcı gerekmez).
+- Başlatma (WSL): `losemi` → `streamlit run app/streamlit_app.py` → tarayıcıda `http://localhost:8501`.
+
+### 7.2 Sayfalar
+
+**1. Analiz (ana sayfa)**
+- **Girdi:** görüntü yükleme (JPG, PNG, TIF) veya 7 hazır örnekten seçim. Hazır örnekler `reports/ornekler/`
+  PDF'lerinin görüntüleri; yalnızca kaynağı "bilinmiyor" olan test görüntüleri (6.6).
+- **Analiz et** → aşama adlı ilerleme çubuğu (ön işleme, segmentasyon, hücre çıkarma, öznitelik, sınıflandırma,
+  risk).
+- Genişletilebilir bölümler:
+  - **a) Ön işleme:** orijinal, boyutlandırılmış, dolgu maskesi, renk normalizasyonu, ters Lab b\*, medyan, CLAHE;
+    her birinin altında bir cümlelik açıklama.
+  - **b) Segmentasyon:** kullanılan yöntemin (K-means; gerekirse Otsu geri dönüşü) maskesi ve konturları, eritrosit
+    çapı ve görüntü tipi. **"Üç yöntemi karşılaştır"** anahtarı Otsu, K-means ve Watershed'i aynı görüntüde, bulunan
+    çekirdek sayılarıyla yan yana gösterir.
+  - **c) Hücreler:** numaralı, sınıflı ve olasılıklı hücre kırpımı ızgarası. Seçilen hücre için en ayırt edici
+    15 öznitelik (her gruptan 5, Adım 4'ün ANOVA F sırası, Türkçe adlarıyla, sınıf medyanlarıyla yan yana) ve kalibre
+    sınıf olasılıkları çubuk grafiği.
+  - **d) Sonuç:** sınıf renkli konturlu görüntü ve lejant (renkler PDF ile aynı), ALL/AML/Healthy sayıları, anormal
+    hücre oranı ve yumuşak oran, renkli risk rozeti (Düşük yeşil, Orta turuncu, Yüksek kırmızı), baskın tip, güven
+    durumu ve nedenleri, hücre tablosu.
+- **PDF raporu indir** butonu; yanında ve sayfanın üstünde sabit "araştırma ve eğitim amaçlı prototip, klinik teşhis
+  aracı değildir" uyarısı.
+- Hücre bulunamazsa "değerlendirilemedi" hatası, düşük güvenli sonuçta nedenleriyle uyarı gösterilir. Bozuk veya
+  desteklenmeyen dosyada anlaşılır hata mesajı verilir; uygulama çökmez.
+
+**2. Model Performansı** — sekmeler hâlinde, `outputs/` figürleri + CSV'lerden tablolar + 1-2 cümle yorum:
+model karşılaştırması, kilitli test karışıklık matrisleri (hücre ve görüntü, kalibre model), risk seviyesi
+karışıklık matrisi ve eşikler, öznitelik ablasyonu, öğrenme eğrisi, kalibrasyon güvenilirlik diyagramı, sızıntı
+tespiti ve düzeltme (eski/yeni sonuç tablosu).
+
+**3. Yöntem** — Graphviz akış şeması ve her aşamanın kısa açıklaması; Adım 2-4 figürleri: renk kanalı seçimi,
+renk normalizasyonu, gürültü filtreleri, kontrast, ön işleme zinciri, eritrosit çapı, segmentasyon karşılaştırması,
+K-means k seçimi, Watershed aşamaları, ölçek normalizasyonu, GLCM örnekleri, öznitelik dağılımları. Yalnızca
+`outputs/` altındaki figürler kullanılır; `data/` veya ALL-IDB dizininden görüntü okunmaz.
+
+**4. Hakkında** — proje özeti, veri kaynakları (Kaggle, ALL-IDB, Münih AML veri seti), kısıtlar ve kaynakça.
+
+### 7.3 Teknik notlar
+
+- **Önbellek:**
+  - Model `st.cache_resource` ile bir kez yüklenir (tüm oturumlar paylaşır).
+  - Analiz sonucu `st.cache_data` ile görüntü baytlarına göre önbelleğe alınır; aynı görüntü ikinci kez anında
+    gelir. Üç yöntem karşılaştırması ve PDF de görüntü özetine göre önbellekli.
+- **İlerleme çubuğu ve önbellek:** Streamlit, önbellekli bir fonksiyonun içinde yapılan öğe çağrılarını kaydeder
+  ve sonuç önbellekten geldiğinde yeniden oynatır. Dışarıda oluşturulmuş bir ilerleme çubuğu bu yeniden oynatmada
+  hata verir. Bu yüzden analiz ayrı bir iş parçacığında çalışır; geri çağrı yalnızca paylaşılan bir sözlüğü günceller,
+  çubuk ana iş parçacığında çizilir.
+- **Oturum durumu:** analiz girdisi `st.session_state`'te tutulur; hücre seçimi veya karşılaştırma anahtarı
+  sonuçları kaybettirmez.
+- **PDF:** geçici klasöre üretilip bayt olarak indirilir; `reports/` altına dosya bırakılmaz.
+
+### 7.4 Test sonucu
+
+`python -m tests.test_arayuz` (Windows'ta ve WSL'de `~/losemi-venv` ile ayrı ayrı çalıştırıldı, ikisi de geçti; ~20 sn):
+
+| Kontrol | Sonuç |
+|---|---|
+| Ana uygulama ve 4 sayfa ayrı ayrı | Hatasız (istisna ve hata mesajı yok) |
+| 7 hazır örnek | Hepsi analiz edildi; risk seviyeleri `ornek_raporlar_kalibre.csv` ile aynı (4 Yüksek, 3 Düşük) |
+| PDF indirme | 7 örnekte de geçerli PDF (1.9-3.3 MB) |
+| Üç yöntem karşılaştırması | ALL (193): Otsu 18, K-means 18, Watershed 18 çekirdek |
+| Hücre seçimi | 15 satırlık öznitelik tablosu ve olasılık grafiği |
+| Bozuk dosya | "Dosya görüntü olarak okunamadı..." hata mesajı, çökme yok |
+| Hücresiz görüntü (düz zemin) | "Değerlendirilemedi" rozeti ve hata mesajı, PDF yine üretiliyor |
+
+Ayrıca sunucu WSL'de başlatılıp `localhost:8501` ve `/performans` sayfasının HTTP 200 döndüğü doğrulandı.
+
+### 7.5 Demo akışı önerisi (sunum, ~5-7 dk)
+
+1. **Hakkında (30 sn):** problem, üç sınıf, "klinik teşhis aracı değildir" uyarısı. Veri kaynağı ve ALL-IDB
+   bulgusundan tek cümle.
+2. **Yöntem (1 dk):** akış şeması üzerinden pipeline'ı anlat. Ön işleme sekmesinden renk kanalı seçimini, segmentasyon
+   sekmesinden üç yöntemin karşılaştırma figürünü göster.
+3. **Analiz — AML örneği (2 dk):** "AML — acute_myeloid (398)" seç, **Analiz et**.
+   - a) Ön işleme: b\* kanalında çekirdeğin belirginleştiğini göster.
+   - b) Segmentasyon: **Üç yöntemi karşılaştır** anahtarını aç; yöntemlerin konturlarını ve çekirdek sayılarını
+     yan yana karşılaştır (K-means'in seçilme gerekçesi: yoğun AML yaymalarında komşu çekirdekleri birleştirmemesi).
+   - c) Hücreler: bir hücre seç; öznitelik değerlerini sınıf medyanlarıyla karşılaştır ve olasılık grafiğini göster.
+   - d) Sonuç: Yüksek risk rozeti, baskın tip AML. **PDF raporu indir** ve PDF'i kısaca aç.
+4. **Analiz — Healthy örneği (30 sn):** "Healthy — healthy_blood_cell (646)": Düşük risk, baskın tip yok.
+5. **Analiz — düşük güven örneği (30 sn):** "Düşük güven — healthy_blood_cell (322)": K-means hücre bulamadı, Otsu
+   geri dönüşüyle 3 hücre bulundu; sonuç düşük güvenli. Sistemin emin olmadığını söyleyebildiğini vurgula.
+6. **Model Performansı (1-2 dk):** kilitli test karışıklık matrisleri (görüntü makro F1 0.985), risk seviyesi matrisi,
+   kalibrasyon diyagramı. Son olarak **Sızıntı** sekmesi: sorunun nasıl bulunup düzeltildiği.
+7. Kapanış: kısıtlar (Hakkında sayfası) ve uyarı.
+
+İpucu: Sunumdan önce 7 örneği bir kez analiz edin; sonuçlar önbelleğe alınır ve sunumda anında açılır (sunucu
+yeniden başlatılmadıkça).
+
+---

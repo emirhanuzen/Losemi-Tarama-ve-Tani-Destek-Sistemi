@@ -11,6 +11,7 @@ run_pipeline tüm ara çıktıları sözlük olarak döndürür (Streamlit aray�
 """
 
 import argparse
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 
@@ -236,7 +237,7 @@ def predict_cells(features: pd.DataFrame) -> np.ndarray:
 
 
 def run_pipeline(image: str | Path | np.ndarray, image_name: str | None = None,
-                 image_type: str | None = None) -> dict:
+                 image_type: str | None = None, progress: Callable[[str, float], None] | None = None) -> dict:
     """
     Tek bir kan yayması görüntüsünde tüm aşamaları çalıştırır ve ara çıktıları döndürür.
 
@@ -244,6 +245,8 @@ def run_pipeline(image: str | Path | np.ndarray, image_name: str | None = None,
         image: Görüntü yolu veya RGB numpy dizisi.
         image_name: Raporda görünecek ad (yol verildiyse dosya adı kullanılır).
         image_type: Biliniyorsa "yayma"/"yakin_cekim"; None ise görüntüden tahmin edilir.
+        progress: Verilirse her aşamanın başında (aşama adı, tamamlanan oran 0-1) ile çağrılır (arayüzdeki
+            ilerleme çubuğu için). Hesaplamayı etkilemez.
 
     Döndürür:
         {
@@ -263,12 +266,18 @@ def run_pipeline(image: str | Path | np.ndarray, image_name: str | None = None,
         image_name = image_name or Path(image).name
         image = load_image(image)
     image_name = image_name or "goruntu"
+    report = progress or (lambda stage, done: None)
+    report("Ön işleme", 0.0)
     _, steps = preprocess(image)
+    report("Segmentasyon", 0.15)
     seg = segment_with_fallback(steps, image_type)
+    report("Hücre çıkarma", 0.35)
     cells = extract_cells(steps["renk_normalize"], seg["etiketler"], steps["gecerli_maske"], seg["eritrosit_capi"])
     # Eğitim tablosunda çap 2 ondalığa yuvarlanarak saklandı (cells_index.csv); aynı değerle hesapla
     diameter = round(seg["eritrosit_capi"], 2)
+    report("Öznitelik çıkarma", 0.45)
     features = pd.DataFrame([crop_features(c["kirpim"], c["maske"], diameter) for c in cells])
+    report("Sınıflandırma", 0.75)
     proba = predict_cells(features)
     classes = list(np.asarray(CLASS_NAMES)[proba.argmax(axis=1)]) if len(proba) else []
     table = pd.DataFrame({
@@ -279,9 +288,11 @@ def run_pipeline(image: str | Path | np.ndarray, image_name: str | None = None,
         "alan": [c["alan"] for c in cells],
         **{f"kutu_{k}": [c["kutu"][i] for c in cells] for i, k in enumerate("xywh")},
     })
+    report("Risk skoru ve görselleştirme", 0.85)
     contours = cell_contours(seg["etiketler"], cells)
     risk = compute_risk(table, seg["yontem"], seg["geri_donus"])
     original, overlay = draw_cells(image, contours, classes)
+    report("Tamamlandı", 1.0)
     return {
         "goruntu_adi": image_name, "on_isleme": steps, "segmentasyon": seg, "konturlar": contours,
         "kirpimlar": [c["kirpim"] for c in cells], "oznitelikler": features, "hucreler": table, "risk": risk,

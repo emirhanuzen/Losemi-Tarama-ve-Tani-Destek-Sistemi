@@ -1,0 +1,23 @@
+# Streamlit arayüz ayarları (streamlit run app/streamlit_app.py proje kökünden çalıştırılınca okunur).
+# Sayfa başlığı app/streamlit_app.py içindeki st.set_page_config ile verilir.
+
+[theme]
+base = "light"
+# Vurgu rengi: sınıf renklerinden (ALL mavi, AML turuncu, Healthy yeşil) ayrışan koyu petrol mavisi
+primaryColor = "#1f5f7a"
+backgroundColor = "#fcfcfb"          # PDF rapor ve figürlerdeki zemin rengi
+secondaryBackgroundColor = "#f4f3ef" # PDF özet kutusunun rengi
+textColor = "#0b0b0b"
+font = "sans serif"
+
+[server]
+headless = true
+port = 8501
+# Büyük mikroskop görüntüleri (ör. 2592x1944 TIF) için yükleme sınırı (MB)
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
