@@ -31,6 +31,11 @@ ALLIDB_DEFAULT_DIRS = {
 ALLIDB_DIR = Path(os.environ.get("LOSEMI_ALLIDB_DIR") or ALLIDB_DEFAULT_DIRS[
     "windows" if os.name == "nt" else ("wsl" if is_wsl() else "diger")])
 
+# Münih AML sitomorfoloji veri seti (Matek ve ark., 2019; TCIA "AML-Cytomorphology_LMU", CC BY 3.0): sınıf
+# klasörleri (MYO, LYT, NGS, MYB) bu dizinin altında. Öncelik LOSEMI_MUNICH_DIR; yoksa ALL-IDB ile aynı varsayılan.
+MUNICH_DIR = Path(os.environ.get("LOSEMI_MUNICH_DIR") or ALLIDB_DEFAULT_DIRS[
+    "windows" if os.name == "nt" else ("wsl" if is_wsl() else "diger")])
+
 DATA_DIR = ROOT_DIR / "data"
 RAW_DATA_DIR = DATA_DIR / "raw"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
@@ -49,7 +54,10 @@ STAGE_OUTPUT_DIRS = {
     "classification": OUTPUTS_DIR / "classification",
     "evaluation": OUTPUTS_DIR / "evaluation",
     "risk": OUTPUTS_DIR / "risk",
+    "external": OUTPUTS_DIR / "external",
 }
+# ALL-IDB görüntüsü içeren figürler ve dış veri ara dosyaları (git dışı: data/ .gitignore kapsamında)
+EXTERNAL_PROCESSED_DIR = DATA_DIR / "processed" / "external"
 
 # Sınıflandırma hedefi: 3 sınıf. Klasör adları data/raw/<sınıf>/ ile birebir aynıdır.
 # ALL = akut lenfoblastik lösemi, AML = akut miyeloid lösemi, Healthy = normal hücre.
@@ -402,3 +410,24 @@ REPORT_MAX_CELL_ROWS = 30      # Hücre tablosu bir sayfaya sığsın; kalanlar 
 REPORT_IMAGE_MAX_SIDE = 800
 REPORT_DISCLAIMER = ("Bu rapor araştırma ve eğitim amaçlı bir prototip tarafından üretilmiştir. "
                      "Klinik teşhis için kullanılamaz; kesin tanı uzman hekim tarafından konmalıdır.")
+
+
+# ---------------------------------------------------------------------------
+# Dış doğrulama (Adım 8): ALL-IDB ve Münih
+# ---------------------------------------------------------------------------
+# Münih sınıf klasörü → beklenen proje sınıfı. Kısaltmalar veri setinin abbreviations.txt dosyasından:
+# MYO = myeloblast (AML blastı), LYT = tipik lenfosit, NGS = segmentli nötrofil (ikisi de normal hücre).
+# MYB = myelocyte (olgunlaşan granülosit öncülü; blast DEĞİL, veri setinde yalnızca 42 görüntü): beklenen sınıf
+# tanımsız, yalnızca ayrıca raporlanır.
+MUNICH_CLASSES = {"MYO": "AML", "LYT": "Healthy", "NGS": "Healthy"}
+MUNICH_EXTRA_CLASSES = ["MYB"]
+# Sınıf başına örnek: 300 (900 görüntü); uçtan uca pipeline görüntü başına ~1 sn, tüm denemeler makul sürede biter.
+MUNICH_SAMPLE_PER_CLASS = 300
+# AYAR (düzeltme seçimi) / TEST (yalnızca en sonda, seçilen yapılandırmalar için bir kez) oranı: %40 / %60.
+# AYAR kısmı 120 görüntü/sınıf: sınıf duyarlılığında ±0.09'luk (%95 GA) belirsizlik; seçim için yeterli,
+# TEST'e daha büyük pay bırakılır.
+MUNICH_TUNE_FRACTION = 0.4
+# ALL-IDB1 .xyc blast merkezlerinin çekirdekle eşleşme yarıçapı = 0.5 × eritrosit çapı (256 px uzayında).
+# Blast çekirdeği ~1-1.5 eritrosit çapında; merkez işaretleri elle konduğu için çekirdeğin içinde ama tam ortada
+# olmayabilir. Yarım çap, komşu çekirdeğe yanlış atamayı önleyecek kadar dar.
+XYC_MATCH_RADIUS_RATIO = 0.5

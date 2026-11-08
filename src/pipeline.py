@@ -52,19 +52,23 @@ def get_model():
 # Segmentasyon (geri dönüşlü)
 # ---------------------------------------------------------------------------
 
-def segment_with_fallback(steps: dict, image_type: str | None = None) -> dict:
+def segment_with_fallback(steps: dict, image_type: str | None = None, diameter: float | None = None) -> dict:
     """
     Seçilen yöntemle (K-means) segmentasyon yapar; hiç çekirdek bulunamazsa Otsu'ya geri döner.
 
     Parametreler:
         steps: preprocess() ara çıktıları.
         image_type: Biliniyorsa "yayma"/"yakin_cekim"; None ise görüntüden tahmin edilir.
+        diameter: Verilirse eritrosit çapı tahmini yerine bu değer kullanılır (dış doğrulamadaki ölçek
+            düzeltmesi denemesi için; tahmin yine yapılır ve raporlanır).
 
     Döndürür:
         {"etiketler" (etiketli maske), "maske" (bool), "yontem" (kullanılan yöntem), "geri_donus" (bool),
-         "birincil_bolge_sayisi", "eritrosit_capi", "eritrosit_tahmini_guvenilir", "tip"} sözlüğü.
+         "birincil_bolge_sayisi", "eritrosit_capi" (kullanılan), "eritrosit_tahmini_guvenilir", "tip",
+         "eritrosit_capi_olculen" (görüntüden ölçülen; güvenilmezse NaN), "eritrosit_bilesen"} sözlüğü.
     """
-    diameter, estimate = image_rbc_diameter(steps, image_type)
+    estimated, estimate = image_rbc_diameter(steps, image_type)
+    diameter = estimated if diameter is None else diameter
     labels = METHODS[SEGMENTATION_METHOD](steps, diameter)
     n_primary = int(len(np.unique(labels)) - 1)
     method, fallback = SEGMENTATION_METHOD, False
@@ -73,7 +77,8 @@ def segment_with_fallback(steps: dict, image_type: str | None = None) -> dict:
         method, fallback = SEGMENTATION_FALLBACK_METHOD, True
     return {"etiketler": labels, "maske": labels > 0, "yontem": method, "geri_donus": fallback,
             "birincil_bolge_sayisi": n_primary, "eritrosit_capi": diameter,
-            "eritrosit_tahmini_guvenilir": bool(estimate["guvenilir"]), "tip": estimate["tip"]}
+            "eritrosit_tahmini_guvenilir": bool(estimate["guvenilir"]), "tip": estimate["tip"],
+            "eritrosit_capi_olculen": float(estimate["cap"]), "eritrosit_bilesen": int(estimate["bilesen_sayisi"])}
 
 
 def cell_contours(labels: np.ndarray, cells: list[dict]) -> list[np.ndarray]:

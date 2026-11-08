@@ -1,0 +1,6 @@
+sinif,beklenen,n,merkez_ALL,merkez_AML,merkez_Healthy,merkez_Hücre yok,duyarlilik,tum_hucrelerde_beklenen_orani,risk_Düşük,risk_Orta,risk_Yüksek,risk_Değerlendirilemedi,ozgulluk,f1
+LYT,Healthy,180,8.0,165.0,7.0,0.0,0.03888888888888889,0.03804347826086957,7.0,0.0,173.0,0.0,,
+MYO,AML,180,14.0,166.0,0.0,0.0,0.9222222222222223,0.9247311827956989,0.0,0.0,180.0,0.0,,
+NGS,Healthy,180,0.0,175.0,0.0,5.0,0.0,0.0,0.0,0.0,175.0,5.0,,
+MYO vs LYT+NGS (merkez hücre),anormal/normal,540,,,,,1.0,,,,,,0.03333333333333333,0.5084745762711864
+"Dengeli doğruluk (MYO, LYT, NGS)",,540,,,,,0.32037037037037036,,,,,,,

@@ -196,13 +196,123 @@ def leakage() -> None:
                 "`data/processed/veri_bolumu_v2.csv` olarak kilitlendi.")
 
 
+EXT = STAGE_OUTPUT_DIRS["external"]
+EXPERIMENT_NAMES = {"mevcut": "Mevcut model", "a_olcek": "a) Ölçek uyarlaması", "b_macenko": "b) Macenko",
+                    "c_artirma": "c) Renk artırması", "d_goreli": "d) Göreli renk"}
+
+
+def external_validation() -> None:
+    """Dış doğrulama (Adım 8): ön kontrol, ALL-IDB, segmentasyon, Münih teşhisi, düzeltme denemeleri ve sonuç."""
+    st.subheader("Dış doğrulama")
+    st.markdown(DIS_DOGRULAMA_OZET)
+
+    st.markdown("**Sonuç (Münih TEST, güvenli ALL-IDB, Kaggle kilitli test)**")
+    final = output_csv("external", "dis_dogrulama_sonuc.csv")
+    if final is not None:
+        cols = ["yapilandirma", "tur", "munih_test_dengeli_dogruluk", "munih_test_duyarlilik_MYO",
+                "munih_test_duyarlilik_LYT", "munih_test_duyarlilik_NGS", "allidb_duyarlilik", "allidb_ozgulluk",
+                "allidb_ALL_tahmin_ALL_orani", "test_hucre_makro_f1", "test_goruntu_makro_f1_tum"]
+        final = final[[c for c in cols if c in final.columns]].rename(columns={
+            "yapilandirma": "Yapılandırma", "tur": "Tür", "munih_test_dengeli_dogruluk": "Münih TEST dengeli doğ.",
+            "munih_test_duyarlilik_MYO": "MYO→AML", "munih_test_duyarlilik_LYT": "LYT→Healthy",
+            "munih_test_duyarlilik_NGS": "NGS→Healthy", "allidb_duyarlilik": "ALL-IDB duyarlılık",
+            "allidb_ozgulluk": "ALL-IDB özgüllük", "allidb_ALL_tahmin_ALL_orani": "ALL-IDB ALL→ALL",
+            "test_hucre_makro_f1": "Kaggle test hücre F1", "test_goruntu_makro_f1_tum": "Kaggle test görüntü F1"})
+    show_table(final)
+
+    st.markdown("**Düzeltme denemeleri (Münih AYAR + Kaggle geliştirme CV; seçim bunlarla yapıldı)**")
+    exp = output_csv("external", "duzeltme_denemeleri.csv")
+    if exp is not None:
+        exp = exp.assign(deneme=exp["deneme"].map(lambda d: EXPERIMENT_NAMES.get(d, d)))[
+            ["deneme", "cv_hucre_makro_f1", "cv_goruntu_makro_f1_tum", "ayar_dengeli_dogruluk", "ayar_duyarlilik_MYO",
+             "ayar_duyarlilik_LYT", "ayar_duyarlilik_NGS", "test_goruntu_makro_f1_tum"]].rename(columns={
+            "deneme": "Deneme", "cv_hucre_makro_f1": "Kaggle CV hücre F1", "cv_goruntu_makro_f1_tum": "Kaggle CV görüntü F1",
+            "ayar_dengeli_dogruluk": "Münih AYAR dengeli doğ.", "ayar_duyarlilik_MYO": "MYO→AML",
+            "ayar_duyarlilik_LYT": "LYT→Healthy", "ayar_duyarlilik_NGS": "NGS→Healthy",
+            "test_goruntu_makro_f1_tum": "Kaggle test görüntü F1"})
+    show_table(exp)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        show_figure(EXT / "munih_test_karisiklik_mevcut.png", "Münih TEST, mevcut model (merkez hücre).")
+    with c2:
+        show_figure(EXT / "allidb_risk_seviyeleri.png", "Güvenli ALL-IDB görüntülerinde risk seviyeleri (mevcut model).")
+
+    st.markdown("**Ön kontrol: Münih ↔ Kaggle kaynak örtüşmesi**")
+    pre = output_csv("external", "munich_kaynak_ozet.csv")
+    if pre is not None:
+        pre = pre[["sinif", "goruntu", "eslesen_A_goruntu", "eslesen_C_kapsamli", "hucre_B_esik_ustu_raporlanan",
+                   "dislanan"]].rename(columns={
+            "sinif": "Münih sınıfı", "goruntu": "Görüntü", "eslesen_A_goruntu": "A) görüntü eşleşmesi",
+            "eslesen_C_kapsamli": "C) kapsamlı tarama", "hucre_B_esik_ustu_raporlanan": "B) hücre NCC ≥ 0.95 (yalnızca rapor)",
+            "dislanan": "Dışlanan"})
+    show_table(pre, skip=("Görüntü", "A) görüntü eşleşmesi", "C) kapsamlı tarama", "B) hücre NCC ≥ 0.95 (yalnızca rapor)",
+                          "Dışlanan"))
+    st.markdown("**ALL-IDB2 Healthy yakın çekimleri neden \"Yüksek\"?**")
+    idb2 = output_csv("external", "allidb2_teshis_goruntu.csv")
+    if idb2 is not None:
+        idb2 = idb2[["alt_kume", "goruntu", "yakin_cekim_orani", "hucre_medyan", "tek_hucreli_orani", "risk_Yüksek",
+                     "tek_hucre_yuksek", "merkez_ALL", "merkez_AML", "merkez_Healthy"]].rename(columns={
+            "alt_kume": "Alt küme", "goruntu": "Görüntü", "yakin_cekim_orani": "Yakın çekim oranı",
+            "hucre_medyan": "Hücre (medyan)", "tek_hucreli_orani": "Tek hücreli oranı", "risk_Yüksek": "Yüksek",
+            "tek_hucre_yuksek": "Tek hücreli + Yüksek", "merkez_ALL": "Merkez→ALL", "merkez_AML": "Merkez→AML",
+            "merkez_Healthy": "Merkez→Healthy"})
+    show_table(idb2, skip=("Görüntü", "Hücre (medyan)", "Yüksek", "Tek hücreli + Yüksek", "Merkez→ALL", "Merkez→AML",
+                           "Merkez→Healthy"))
+    st.markdown("**ALL-IDB (mevcut model, eğitimde hiç görülmemiş görüntüler)**")
+    idb = output_csv("external", "allidb_metrikleri_mevcut.csv")
+    if idb is not None:
+        idb = idb[idb["kural"] == "risk Orta/Yüksek"][["alt_kume", "n", "duyarlilik", "ozgulluk", "f1", "ALL_tahmin_ALL",
+                                                       "ALL_tahmin_AML"]].rename(columns={
+            "alt_kume": "Alt küme", "duyarlilik": "Duyarlılık", "ozgulluk": "Özgüllük", "f1": "F1",
+            "ALL_tahmin_ALL": "ALL→ALL", "ALL_tahmin_AML": "ALL→AML"})
+    show_table(idb, skip=("n", "ALL→ALL", "ALL→AML"))
+    st.markdown("**Segmentasyonun gerçek etiketle değerlendirmesi (ALL-IDB1 .xyc blast merkezleri)**")
+    seg = output_csv("external", "segmentasyon_xyc_ozet.csv")
+    if seg is not None:
+        seg = seg[seg["etiket"] == "ALL"][["yontem", "goruntu", "blast", "blast_duyarlilik", "birlesik_blast_orani",
+                                            "goruntu_basina_cekirdek"]].rename(columns={
+            "yontem": "Yöntem", "goruntu": "Görüntü", "blast": "Blast", "blast_duyarlilik": "Blast duyarlılığı",
+            "birlesik_blast_orani": "Birleşik blast oranı", "goruntu_basina_cekirdek": "Görüntü başına çekirdek"})
+    show_table(seg, skip=("Görüntü", "Blast"))
+    st.markdown("**Münih hatasının teşhisi**")
+    show_figure(EXT / "oznitelik_kaymasi.png", "En ayırt edici 15 öznitelik: Kaggle ve Münih dağılımları.")
+    show_figure(EXT / "munih_olcek_segmentasyon_ornekleri.png",
+                "Münih örneklerinde ölçek ve segmentasyon (Matek ve ark. 2019, TCIA, CC BY 3.0).")
+    show_figure(EXT / "renk_dagilimi_kaggle_allidb_munih.png", "Normalizasyon öncesi ve sonrası zemin/çekirdek rengi.")
+
+
+# Adım 8 özeti (docs/sunum_notlari.md "Adım 8 — Dış Doğrulama ve Alan Kayması" ile aynı sonuçlar)
+DIS_DOGRULAMA_OZET = """
+Model hiç görmediği iki veri setinde sınandı. **Kaggle'daki başarı başka merkezlere genellenmiyor.**
+
+- **ALL-IDB** (eğitimde hiç görülmemiş 121 görüntü; yalnızca ALL ve sağlıklı): lösemi duyarlılığı **0.92**, ancak
+  özgüllük **0.43**. ALL hastalarının görüntüleri neredeyse hep **AML** olarak tiplendi (75 görüntüden 2'si ALL).
+  ALL-IDB2 sağlıklı yakın çekimlerinin çoğu "Yüksek" çıktı: görüntülerin %89'unda tek hücre var, bu yüzden risk
+  skoru yalnızca 0 ya da 1 olabiliyor. Ayrıca Kaggle'da hiç sağlıklı yakın çekim yok.
+- **Münih AML veri seti** (Matek ve ark. 2019; 540 TEST görüntüsü): model hemen her hücreye AML diyor. Miyeloblastlar
+  %92 AML, ama lenfositlerin %96'sı ve nötrofillerin %100'ü de AML. Dengeli doğruluk **0.32** (şans düzeyi 0.33).
+- **Sebep: renk ve kaynak karışması.** Kaggle AML görüntüleri, ALL ve sağlıklı görüntülerden (çoğu ALL-IDB) farklı
+  bir çekim kaynağından geliyor: parlak zemin, doygun mor çekirdek. Münih görüntüleri de böyle. Model bu kaynak
+  imzasını "AML" olarak öğrenmiş. Segmentasyon ve ölçek sorunun kaynağı değil.
+- **Düzeltme denemeleri** (ölçek uyarlaması, Macenko, renk artırması, göreli renk) Münih'te anlamlı iyileşme
+  sağlamadı. Önceden sabitlenen kurala göre ölçek uyarlaması seçildi, ama TEST'teki fark +0.01.
+- **Ek deney (dış doğrulama DEĞİL):** Münih AYAR kısmındaki 360 hücre eğitime eklenince Münih TEST dengeli doğruluğu
+  **0.91**'e çıkıyor; Kaggle testi değişmiyor (görüntü F1 0.967). Sorun model kapasitesinde değil, tek kaynaklı
+  eğitim verisinde.
+
+Varsayılan model değiştirilmedi. Bu sonuçlar sistemin yalnızca Kaggle'a benzer görüntülerde sınandığını ve
+kliniğe uygun olmadığını gösterir.
+"""
+
+
 def page() -> None:
     """Model performansı sayfasını çizer."""
     st.title("Model Performansı")
     disclaimer()
     tabs = st.tabs(["Model karşılaştırması", "Kilitli test", "Risk seviyesi", "Ablasyon", "Öğrenme eğrisi",
-                    "Kalibrasyon", "Sızıntı"])
+                    "Kalibrasyon", "Sızıntı", "Dış doğrulama"])
     for tab, section in zip(tabs, [model_comparison, locked_test, risk_levels, ablation, learning_curve,
-                                   calibration, leakage]):
+                                   calibration, leakage, external_validation]):
         with tab:
             section()

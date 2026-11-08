@@ -1,0 +1,15 @@
+munich,duzey,kaynak,ncc,gorsel_inceleme
+MYO/MYO_2354.tiff,goruntu_A,data/raw/ALL/acute_lymphocytic (124).jpg,0.9517902731895447,farklı hücre
+LYT/LYT_3269.tiff,goruntu_A,data/raw/ALL/acute_lymphocytic (194).jpg,0.534224808216095,farklı hücre
+MYO/MYO_0391.tiff,goruntu_A,data/raw/ALL/acute_lymphocytic (208).jpg,0.658954918384552,farklı hücre
+LYT/LYT_2002.tiff,goruntu_A,data/raw/ALL/acute_lymphocytic (54).jpg,0.297423779964447,farklı hücre
+MYO/MYO_0226.tiff,goruntu_A,data/raw/ALL/acute_lymphocytic (622).jpg,,farklı hücre
+MYO/MYO_1636.tiff,goruntu_A,data/raw/ALL/acute_lymphocytic (684).jpg,0.6663081049919128,farklı hücre
+NGS/NGS_2135.tiff,goruntu_A,data/raw/AML/acute_myeloid   (126).jpg,0.6188032031059265,farklı hücre
+NGS/NGS_4495.tiff,goruntu_A,data/raw/AML/acute_myeloid   (589).jpg,0.6496238112449646,farklı hücre
+LYT/LYT_0852.tiff,goruntu_A,data/raw/Healthy/healthy_blood_cell  (294).jpg,0.9535676836967468,farklı hücre
+LYT/LYT_2814.tiff,goruntu_C_kaggle_bilinmiyor,data/raw/ALL/acute_lymphocytic (250).jpg,0.9557804465293884,farklı hücre
+MYO/MYO_1233.tiff,goruntu_C_kaggle_bilinmiyor,data/raw/ALL/acute_lymphocytic (556).jpg,0.9544221758842468,farklı hücre
+MYO/MYO_0365.tiff,goruntu_C_kaggle_bilinmiyor,data/raw/ALL/acute_lymphocytic (570).jpg,0.9648391604423523,farklı hücre
+LYT/LYT_3356.tiff,goruntu_C_kaggle_bilinmiyor,data/raw/ALL/acute_lymphocytic (643).jpg,0.9557213187217712,farklı hücre
+LYT/LYT_0175.tiff,goruntu_C_negatif_ALL-IDB,data/raw/ALL/acute_lymphocytic (110).jpg,0.9504582285881042,farklı hücre

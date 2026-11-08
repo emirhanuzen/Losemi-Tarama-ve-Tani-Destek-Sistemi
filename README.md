@@ -305,6 +305,34 @@ kaynaklanıyor olabilir; bu ihtimal dışlanamaz.
 Ancak yakın çekimler hiç görülmeden eğitilen bir model, yayma görüntülerinde aynı başarıyı verdi (makro F1 0.920'ye
 karşı 0.922). Yani model yayma görüntülerinde büyütme ipucuna dayanmıyor.
 
+### Dış doğrulama
+
+Model, eğitimde hiç görülmemiş iki veri setinde sınandı. **Kaggle'daki başarı başka merkezlere genellenmiyor.**
+
+| Veri seti | n | Sonuç (mevcut model) |
+|---|---:|---|
+| ALL-IDB, eğitimde görülmemiş görüntüler (ALL + sağlıklı) | 121 | Lösemi duyarlılığı **0.92**, özgüllük **0.43**; ALL hastalarının 75 görüntüsünden 68'i **AML** olarak tiplendi |
+| Münih AML veri seti (Matek ve ark. 2019), TEST | 540 | Miyeloblast → AML %92; ama lenfositlerin %96'sı ve nötrofillerin %100'ü de AML. Dengeli doğruluk **0.32** (şans 0.33) |
+
+- **Sebep: çekim kaynağı ile sınıfın karışması.** Kaggle'da AML görüntüleri, ALL ve sağlıklı görüntülerden (yaklaşık
+  yarısı ALL-IDB) farklı bir kaynaktan geliyor: parlak zemin (L\* ≈ 92'ye karşı ≈ 60) ve doygun mor çekirdek. Münih
+  görüntüleri de aynı karakterde. Model bu kaynak imzasını "AML" olarak öğrenmiş. Ölçek, segmentasyon ve görüntü
+  tipi kısayolu ayrı ayrı incelendi; ana sebep değiller.
+- **ALL-IDB2 sağlıklı yakın çekimleri** çoğunlukla "Yüksek" çıkıyor. Görüntülerin %89'unda tek hücre var, bu yüzden
+  risk skoru yalnızca 0 ya da 1 olabiliyor. Ayrıca Kaggle'da hiç sağlıklı yakın çekim yok.
+- **Düzeltme denemeleri:** ölçek uyarlaması, Macenko boya normalizasyonu, renk artırması ve göreli renk öznitelikleri.
+  Münih AYAR kısmında dengeli doğruluğu en fazla 0.33'ten 0.35'e çıkardı; TEST'te +0.01. Seçim kuralı önceden
+  sabitlendi ve Münih TEST'e yalnızca en sonda bakıldı.
+- **Ek deney (dış doğrulama değil):** Münih AYAR'ın 360 hücresi eğitime eklenince Münih TEST dengeli doğruluğu
+  **0.91**'e çıkıyor, Kaggle testi değişmiyor (görüntü F1 0.967). Sorun model kapasitesinde değil, tek kaynaklı eğitim
+  verisinde.
+- **Kaynak ön kontrolü:** Münih'in 15.731 görüntüsü Kaggle'la görüntü ve hücre düzeyinde, pozitif ve negatif
+  kontrollerle karşılaştırıldı. Örtüşme kanıtı bulunmadı; ihtiyaten 14 görüntü dışlandı.
+- **Varsayılan model değiştirilmedi.** Ayrıntılar: `docs/sunum_notlari.md` (Adım 8) ve `outputs/external/`.
+
+![Münih TEST karışıklık matrisi](outputs/external/munih_test_karisiklik_mevcut.png)
+*Münih TEST görüntülerinde mevcut modelin merkez hücre tahminleri (görüntüler: Matek ve ark. 2019, CC BY 3.0).*
+
 ## Kısıtlar ve ileride yapılacaklar
 
 **Kısıtlar**
@@ -314,9 +342,9 @@ karşı 0.922). Yani model yayma görüntülerinde büyütme ipucuna dayanmıyor
   "boyanma tarzını" da öğreniyor olabilir.
 - **Görüntü düzeyi etiketler.** Her hücre, bulunduğu görüntünün etiketini alıyor. Bir lösemi görüntüsündeki normal
   lenfosit de "ALL"/"AML" sayılıyor, dolayısıyla hücre düzeyi metrikler etiket gürültüsü içeriyor.
-- **Dış doğrulama yok.** Sonuçlar aynı veri setinden ayrılmış bir test setine ait; başka bir laboratuvarın
-  görüntülerinde başarı düşebilir. AML'nin tamamı ALL-IDB dışı bir kaynaktan geliyor. Kaynağı bilinmeyen ALL ve
-  normal görüntüler AML'ye biraz daha sık kayıyor (CV'de %2-6'ya karşı %0.4-4); dış veride bu etki büyüyebilir.
+- **Dış veriye genellenmiyor.** [Dış doğrulamada](#dış-doğrulama) ALL-IDB'de özgüllük 0.43, Münih'te dengeli
+  doğruluk şans düzeyinde. Kaggle'da AML ayrı bir çekim kaynağından geliyor ve model bu kaynak imzasını öğreniyor.
+  Kilitli test sonuçları yalnızca Kaggle'a benzer görüntüler için geçerli.
 - **Kalan sızıntı ölçülemez.** "Kaynağı bilinmiyor" ALL-IDB'de bulunamadı demektir. Kaynak tespitinin ve kopya
   tespitinin kaçırdığı türevler hâlâ farklı gruplarda olabilir.
 - **Görüntü tipi dağılımı.** Normal sınıfta yakın çekim yok, AML'de çok az (test setinde 1 görüntü). Yakın çekimlerde
@@ -324,7 +352,8 @@ karşı 0.922). Yani model yayma görüntülerinde büyütme ipucuna dayanmıyor
 - **Segmentasyon kapsaması.** K-means, normal görüntülerin bir kısmında hiç çekirdek bulamıyor.
 
 **İleride yapılacaklar**
-- Farklı laboratuvar ve mikroskoplardan gelen verilerle dış doğrulama.
+- Çok merkezli eğitim verisi: ek deneyde Münih'ten 360 etiketli hücre Münih başarısını 0.91'e çıkardı.
+  Bağımsız doğrulama için üçüncü bir merkez gerekir.
 - Hücre düzeyinde etiketlenmiş veriyle eğitim ve değerlendirme.
 - Elle işaretlenmiş çekirdek maskeleriyle segmentasyonun doğrudan ölçülmesi.
 - Kapsama sorununun segmentasyon tarafında çözülmesi. Şu an K-means hücre bulamazsa Otsu'ya geri dönülüyor ve az
@@ -380,6 +409,11 @@ python -m src.leakage_analysis         # eski modelin temiz değerlendirmesi, ka
 python -m src.risk_analysis            # risk eşikleri (outputs/risk/) ve örnek PDF raporlar (reports/ornekler/)
 python -m src.pipeline --goruntu <yol> --pdf   # tek görüntü: uçtan uca analiz ve PDF rapor (reports/)
 python -m tests.test_arayuz            # arayüz testi: tüm sayfalar, 7 hazır örnek, PDF indirme
+# Dış doğrulama (ALL-IDB ve Münih veri seti ayrıca indirilir; LOSEMI_ALLIDB_DIR / LOSEMI_MUNICH_DIR)
+python -m src.external_validation allidb segmentasyon allidb2_teshis   # ALL-IDB (outputs/external/)
+python -m src.munich_overlap && python -m src.munich_overlap kapsamli  # Münih ↔ Kaggle kaynak ön kontrolü
+python -m src.external_validation munich_bolum munich_teshis           # kilitli Münih AYAR/TEST ayrımı, teşhis
+python -m src.domain_shift denemeler && python -m src.domain_shift sonuc  # düzeltme denemeleri, son değerlendirme
 ```
 
 ### Arayüz
@@ -473,3 +507,6 @@ Her adımın ayrıntılı gerekçeleri, ara sonuçları ve tüm tabloları [docs
 13. C. Cortes, V. Vapnik, "Support-Vector Networks," *Machine Learning*, vol. 20, no. 3, pp. 273–297, 1995.
 14. J. Platt, "Probabilistic Outputs for Support Vector Machines and Comparisons to Regularized Likelihood Methods," *Advances in Large Margin Classifiers*, MIT Press, pp. 61–74, 1999.
 15. F. Pedregosa ve ark., "Scikit-learn: Machine Learning in Python," *Journal of Machine Learning Research*, vol. 12, pp. 2825–2830, 2011.
+16. R. Donida Labati, V. Piuri, F. Scotti, "ALL-IDB: The Acute Lymphoblastic Leukemia Image Database for Image Processing," *Proc. IEEE International Conference on Image Processing (ICIP)*, pp. 2045–2048, 2011.
+17. C. Matek, S. Schwarz, K. Spiekermann, C. Marr, "Human-level recognition of blast cells in acute myeloid leukaemia with convolutional neural networks," *Nature Machine Intelligence*, vol. 1, pp. 538–544, 2019 (veri seti: "AML-Cytomorphology_LMU", The Cancer Imaging Archive, CC BY 3.0).
+18. M. Macenko ve ark., "A Method for Normalizing Histology Slides for Quantitative Analysis," *Proc. IEEE International Symposium on Biomedical Imaging (ISBI)*, pp. 1107–1110, 2009.

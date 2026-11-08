@@ -1887,3 +1887,199 @@ Ayrıca sunucu WSL'de başlatılıp `localhost:8501` ve `/performans` sayfasın�
 yeniden başlatılmadıkça).
 
 ---
+
+## Adım 8 — Dış Doğrulama ve Alan Kayması
+
+### 8.1 Ne yapıldı
+
+- Kaggle ile eğitilen model, eğitimde hiç görülmemiş iki veri setinde sınandı:
+  - **ALL-IDB** (Labati ve ark. 2011): yalnızca `dis_dogrulama_guvenli = True` olan 121 görüntü (IDB1: 17 ALL +
+    18 sağlıklı yayma; IDB2: 58 ALL + 28 sağlıklı tek hücre kırpımı). ALL-IDB'de AML yok.
+  - **Münih AML sitomorfoloji veri seti** (Matek ve ark. 2019, TCIA "AML-Cytomorphology_LMU", CC BY 3.0): 400x400
+    tek hücre kırpımları, 100x objektif. Eşleme: MYO (miyeloblast) → AML; LYT (tipik lenfosit) ve NGS (segmentli
+    nötrofil) → Healthy. MYB (miyelosit; blast değil, 42 görüntü) ayrıca raporlandı, AML sayılmadı.
+- Sıra: (0) Münih ↔ Kaggle kaynak ön kontrolü → (2) kilitli Münih AYAR/TEST ayrımı → (3) teşhis → (4) düzeltme
+  denemeleri → (5) önceden sabitlenmiş kuralla seçim ve son değerlendirme. Münih TEST'e yalnızca en sonda bakıldı.
+- Kod: `src/munich_overlap.py` (ön kontrol), `src/external_validation.py` (ALL-IDB, segmentasyon, Münih ayrımı ve
+  teşhis), `src/domain_shift.py` (denemeler ve sonuç). Çıktılar `outputs/external/`. ALL-IDB görüntüsü içeren figür
+  (`segmentasyon_xyc_ornekleri.png`) ve dış veri öznitelik tabloları lisans gereği `data/processed/external/` altında
+  (git dışı).
+- **Varsayılan model değiştirilmedi** (`losemi_siniflandirici_v2_kalibre`). Deneme modelleri ayrı adlarla kaydedildi:
+  `models/losemi_siniflandirici_v2_{b_macenko,c_artirma,d_goreli}_kalibre.joblib`.
+
+### 8.2 Ön kontrol: Münih ↔ Kaggle kaynak örtüşmesi
+
+Münih'in 15.731 görüntüsü (MYO 3268, LYT 3937, NGS 8484, MYB 42) Kaggle'ın 1800 görüntüsüyle üç düzeyde
+karşılaştırıldı (`munich_kaynak_ozet.csv`):
+
+| Düzey | Yöntem | Kabul | Görsel inceleme |
+|---|---|---:|---|
+| A) Görüntü | Her Kaggle görüntüsü için en yakın 3 Münih görüntüsü (pHash) → geniş bağlamlı NCC + ORB/RANSAC | 12 çift | Hiçbiri aynı hücre değil |
+| B) Hücre | Her Münih merkez hücresi için en yakın 3 Kaggle hücre kırpımı → ortak ölçekte NCC | 797 görüntü NCC ≥ 0.95 | En yüksekler farklı hücre |
+| C) Kapsamlı | Kaynağı bilinmeyen 225 Kaggle yakın çekimi × **tüm** Münih (kaba NCC + tam çözünürlükte doğrulama) | 4 | Hiçbiri aynı hücre değil |
+
+- **Pozitif kontrol** (değiştirilmiş Münih görüntüleri: döndürme, ayna, kırpma, renk, JPEG): A ve B'de pHash gerçek
+  kaynağı ilk 3 adaya yalnızca %20 / %10 oranında koydu. Bu yüzden C eklendi: kaynak ilk 10 adaya %40 oranında girdi,
+  6/20 kabul edildi (NCC 0.95-0.99). **Yöntemin duyarlılığı sınırlı:** ağır biçimde değiştirilmiş bir kopya
+  kaçırılabilir.
+- **Negatif kontrol:**
+  - B: en iyi eşleşmesi kaynağı ALL-IDB olan (Münih'te olamayacak) bir Kaggle hücresi olan Münih hücrelerinin %8.7'si
+    NCC ≥ 0.95 verdi (en yüksek 0.985). Bu oran kaynağı bilinmeyen hücrelerde %2.1. Kaggle yayma hücreleri ~10 px
+    eritrosit çapında; bu çözünürlükte farklı yuvarlak çekirdekler de yüksek korelasyon veriyor.
+  - C: kaynağı ALL-IDB olan 40 yakın çekimin 2'si kabul edildi (%5). Kaynağı bilinmeyenlerde oran %1.8, yani
+    negatif kontrolün altında.
+- **Sonuç:** Münih'in Kaggle'da bulunduğuna dair kanıt yok.
+- **Dışlama kuralı (ihtiyatlı):** A ve C'de kabul edilen her Münih görüntüsü dışlandı (14 görüntü: LYT 6, MYO 6,
+  NGS 2; `munich_dislanan.csv`). B yalnızca raporlandı. Negatif kontrol B'nin ayırt edici olmadığını gösteriyor;
+  ayrıca B'yi dışlamak Kaggle hücrelerine en çok benzeyen Münih hücrelerini çıkararak dış doğrulamayı kolaylaştırırdı
+  (seçim yanlılığı).
+
+### 8.3 Münih ayrımı
+
+- Dışlananlar çıkarıldıktan sonra her sınıftan 300 görüntü sabit tohumla seçildi (`MUNICH_SAMPLE_PER_CLASS`). Sınıf
+  içinde %40 **AYAR** (120), %60 **TEST** (180). MYB'nin 42 görüntüsü "ek" bölümünde.
+- Ayrım `outputs/external/munich_bolum.csv` olarak kilitlendi; yeniden üretilmez.
+- Değerlendirme merkez hücre tahminiyle yapıldı: görüntü merkezine en yakın çekirdek, çünkü Münih görüntüleri tek
+  hücre merkezli kırpımlar. Seçim ölçütü dengeli doğruluk, yani MYO, LYT ve NGS duyarlılıklarının ortalaması
+  (şans düzeyi 0.33).
+
+### 8.4 ALL-IDB sonuçları (mevcut model)
+
+| Alt küme | n | Duyarlılık | Özgüllük | F1 | ALL → ALL / AML |
+|---|---:|---:|---:|---:|---:|
+| ALL-IDB1 (yayma) | 35 | 0.941 | 0.722 | 0.842 | 1 / 16 |
+| ALL-IDB2 (yakın çekim) | 86 | 0.914 | 0.250 | 0.803 | 1 / 52 |
+| Birlikte | 121 | **0.920** | **0.435** | 0.812 | 2 / 68 |
+
+Kural: risk Orta veya Yüksek ise "anormal" (`allidb_metrikleri_mevcut.csv`, figür `allidb_risk_seviyeleri.png`).
+
+- Lösemi görüntüleri büyük ölçüde yakalanıyor, ancak **tip tutmuyor**: ALL hastalarının görüntüleri neredeyse hep
+  AML olarak tiplendi. Kaggle'daki ALL/AML ayrımı dış veriye genellenmiyor.
+- **Segmentasyon gerçek etiketle** (ALL-IDB1 `.xyc` blast merkezleri, 49 görüntü, 510 blast;
+  `segmentasyon_xyc_ozet.csv`): üç yöntem de blastların %100'ünde bir çekirdek buldu. Birbirine değen blastların
+  birleşme oranı K-means'te en düşük (%52; Otsu %58, Watershed %57). K-means 59 sağlıklı görüntünün 8'inde hiç
+  çekirdek bulamadı (pipeline'da Otsu geri dönüşü var). Adım 3'teki K-means seçimi gerçek etiketle de destekleniyor.
+
+**ALL-IDB2 sağlıklı yakın çekimleri neden "Yüksek"?** (`allidb2_teshis_*.csv`; 28 görüntünün 21'i Yüksek)
+1. **Tek hücre:** görüntülerin %89'unda yalnızca bir çekirdek var. Risk skoru, anormal hücre oranı olduğu için 0 ya
+   da 1 değerini alabiliyor; o hücre anormal tahmin edilince sonuç doğrudan "Yüksek" oluyor (21 Yüksek'in 19'u).
+   Arayüz ve PDF bu durumda "düşük güven" uyarısı veriyor (5 hücreden az).
+2. **Eğitimde örnek yok:** Kaggle'da 320 yakın çekim var (ALL 290, AML 30); **sağlıklı yakın çekim hiç yok**. Model
+   yüksek büyütmede normal hücre görmemiş. IDB2 sağlıklı merkez hücreleri ALL 11, AML 10, Healthy 6 olarak tahmin edildi.
+3. **Tip kısayolu değil:** Kaggle hücrelerinden eğitilen "yakın çekim mi?" modeli IDB2 sağlıklı hücrelerine ortalama
+   P = 0.15 veriyor. Öznitelikler eritrosit çapına göre ölçeklendiği için hücreler "yakın çekim" görünmüyor; hata
+   gerçek bir görünüm kaymasından kaynaklanıyor.
+4. Ölçek uyarlaması (8.6a) durumu değiştirmedi: 21 → 19 Yüksek.
+
+### 8.5 Münih teşhisi (mevcut model, AYAR)
+
+| Münih sınıfı | Beklenen | Merkez → ALL / AML / Healthy | Duyarlılık |
+|---|---|---:|---:|
+| MYO | AML | 7 / 113 / 0 | 0.942 |
+| LYT | Healthy | 6 / 109 / 5 | 0.042 |
+| NGS | Healthy | 0 / 119 / 1 | 0.008 |
+| MYB (ek) | — | 0 / 42 / 0 | — |
+
+Model hemen her hücreye AML diyor; dengeli doğruluk **0.33**, yani şans düzeyi. MYO'daki yüksek duyarlılık da bunun
+yan etkisi. Teşhis (`munih_ayar_karisiklik_mevcut.png`):
+
+- **Ölçek** (`olcek_eritrosit_capi.csv`): Münih eritrosit çapı ~61 px (256 px uzayında), Kaggle yakın çekimleriyle
+  aynı (62 px), tahmin %99 güvenilir. Öznitelikler 10 px referans ölçeğine çevrildiği için ölçek tutarlı. Çekirdek/eritrosit
+  çap oranları biyolojik olarak makul (LYT 1.36, NGS 1.17, MYO 1.87).
+- **Segmentasyon** (`munih_olcek_segmentasyon_ornekleri.png`): çekirdek konturları temiz; NGS'nin segmentli çekirdeği
+  tek bölge olarak bulunuyor. Hatanın kaynağı değil.
+- **Renk — asıl sebep** (`renk_lab_ozet.csv`, `renk_dagilimi_kaggle_allidb_munih.png`; normalizasyon öncesi medyanlar):
+
+  | Grup | Zemin L\* | Çekirdek a\* / b\* |
+  |---|---:|---:|
+  | Kaggle ALL / Healthy | 61 / 58 | 40 / −43, 29 / −26 |
+  | ALL-IDB1 / IDB2 | 60 / 63 | 32 / −32, 33 / −34 |
+  | **Kaggle AML** | **92** | **55 / −55** |
+  | **Münih LYT / MYO / NGS** | **89-92** | **59-66 / −63 ile −67** |
+
+  Kaggle'da AML görüntüleri, ALL ve Healthy'den (yarısı ALL-IDB) farklı bir çekim kaynağından geliyor: parlak zemin,
+  doygun mor çekirdek. Münih de aynı çekim karakterinde. Zemin tabanlı normalizasyon zemini hizalıyor ama çekirdek
+  doygunluğunu hizalamıyor: normalizasyon sonrası Münih çekirdekleri (a\* ≈ 55, b\* ≈ −62) Kaggle AML'ye (54 / −52)
+  yakın, Kaggle Healthy'den (31 / −33) uzak. **Model "doygun mor çekirdek = AML" kaynak imzasını öğrenmiş.**
+- **Öznitelik grupları** (`oznitelik_grubu_munih.csv`; yalnız bir grupla eğitilen modellerin Münih normal hücrelerinde
+  AML oranı):
+  - Yalnız renk: LYT %85, NGS %98.
+  - Şekil + doku + göreli renk farkı: %94 / %98, yani mutlak rengi çıkarmak yetmiyor.
+  - Yalnız şekil: LYT %35 AML (daha dengeli), ama NGS %95. Segmentli nötrofil çekirdeği (solidity 0.83, Kaggle
+    Healthy 0.96) Kaggle'ın sağlıklı hücrelerinde pek yok.
+  - 58 öznitelikten 27'sinde Münih normal hücreleri Kaggle AML medyanına daha yakın, 21'inde Kaggle aralığının
+    dışında (`oznitelik_kaymasi.csv`, `oznitelik_kaymasi.png`).
+- **Tip kısayolu** (`tip_kisayolu_munih.csv`): Münih hücrelerinde P(yakın çekim) 0.03-0.34. Ana sebep değil.
+
+### 8.6 Düzeltme denemeleri
+
+Eğitim yalnızca Kaggle v2 geliştirme setiyle yapıldı; Münih yalnızca AYAR'da değerlendirildi
+(`duzeltme_denemeleri.csv`).
+
+- **a) Ölçek uyarlaması:** eritrosit çapı > 20 px olan görüntü, çap 10 px olacak şekilde küçültülüp dolgulu tuvale
+  konur. Model aynı, yalnızca çıkarım değişir.
+- **b) Macenko:** boya ayrıştırmasıyla Kaggle referans boyalarına normalizasyon (α = %5). Yalnızca öznitelik görüntüsünde
+  uygulandı; segmentasyon varsayılan, çünkü iki boyalı model Giemsa'nın üç renk bileşenini temsil edemiyor. Model yeniden
+  eğitildi.
+- **c) Renk artırması:** her Kaggle görüntüsünün 2 rastgele Lab kopyası (parlaklık, kontrast, ton ±15, doygunluk
+  ×0.75-1.25).
+- **d) Göreli renk:** şekil + doku + yalnızca çekirdek − halka renk farkları (34 öznitelik).
+
+| Deneme | Kaggle CV görüntü F1 | Münih AYAR dengeli doğ. | MYO → AML | LYT → Healthy | NGS → Healthy |
+|---|---:|---:|---:|---:|---:|
+| Mevcut | 0.953 | 0.330 | 0.941 | 0.041 | 0.008 |
+| a) Ölçek | 0.964 | **0.347** | 0.941 | 0.066 | 0.033 |
+| b) Macenko | 0.951 | 0.261 | 0.750 | 0.008 | 0.025 |
+| c) Renk artırması | 0.960 | 0.294 | 0.833 | 0.025 | 0.025 |
+| d) Göreli renk | 0.875 ✗ | 0.316 | 0.941 | 0.000 | 0.008 |
+
+- **Seçim kuralı** (sonuçlardan önce sabitlendi): Münih AYAR dengeli doğruluğu en yüksek olan seçilir; Kaggle
+  geliştirme CV görüntü F1'i en fazla 0.02 düşebilir. d) 0.078 düştüğü için elendi. **Seçilen: a) ölçek uyarlaması.**
+- **Yorum:** hiçbir deneme sorunu çözmüyor; normal hücrelerin %93'ten fazlası hâlâ AML. a)'nın +0.017'lik farkı
+  360 görüntüde gürültü düzeyinde. Renk müdahaleleri (b, c) MYO duyarlılığını düşürdü ama normal hücreleri
+  kurtaramadı. Teşhisle tutarlı: sorun çıkarım tarafında değil, Kaggle etiketinin çekim kaynağıyla karışmasında.
+  Teşhis hiçbir birleşime yön göstermediği için birleşik deneme eklenmedi.
+
+### 8.7 Son değerlendirme
+
+Münih TEST'e burada, yapılandırma başına bir kez bakıldı (`dis_dogrulama_sonuc.csv`,
+`munih_test_karisiklik_{mevcut,a_olcek}.png`).
+
+| Yapılandırma | Münih TEST dengeli doğ. | MYO | LYT | NGS | ALL-IDB duyarlılık / özgüllük | Kaggle test görüntü F1 |
+|---|---:|---:|---:|---:|---:|---:|
+| Mevcut | 0.320 | 0.922 | 0.039 | 0.000 | 0.920 / 0.435 | 0.967 |
+| a) Ölçek (seçilen) | 0.330 | 0.922 | 0.050 | 0.017 | 0.893 / 0.478 | 0.970 |
+| *Ek deney: mevcut + Münih AYAR eğitimde* | *0.911* | *0.894* | *0.928* | *0.911* | — | *0.967* |
+| *Ek deney: a) + Münih AYAR eğitimde* | *0.926* | *0.878* | *0.922* | *0.978* | — | *0.971* |
+
+- **Dış doğrulama (yalnızca Kaggle ile eğitim):** Münih'te model şans düzeyinde; normal hücre özgüllüğü %3.
+  ALL-IDB'de lösemiyi yakalıyor (duyarlılık ~0.9), ama özgüllüğü düşük ve ALL/AML tipini tutturamıyor.
+- **Çok merkezli ek deney — dış doğrulama DEĞİL:** Münih AYAR'ın 360 merkez hücresi eğitime eklendi (MYO → AML,
+  LYT/NGS → Healthy). Münih TEST dengeli doğruluğu 0.33'ten 0.91-0.93'e çıktı; Kaggle testi değişmedi. **Aynı
+  öznitelikler ve aynı model, ikinci bir merkezden az sayıda etiketli hücre görünce iki alanda da çalışıyor.** Sorun
+  model kapasitesinde değil, tek kaynaklı ve sınıfla karışık eğitim verisinde. Bu sonuç Münih'in ayrı bir kısmından
+  geldiği için iyimser değil, ama artık bağımsız bir dış doğrulama da değil. Doğrulama için üçüncü bir merkez gerekir.
+
+**Önerilen model:** varsayılan model (`losemi_siniflandirici_v2_kalibre`, ölçek uyarlamasız) korunmalı.
+- Ölçek uyarlaması kurala göre seçildi, ama TEST'teki kazanç +0.01 ve ALL-IDB duyarlılığını 0.92'den 0.89'a
+  düşürüyor. Pipeline'a ek karmaşıklık getirmeye değmez.
+- Gerçek iyileşme için yol çok merkezli eğitim verisi. Çok merkezli model yalnızca deney olarak raporlandı;
+  kaydedilmedi ve arayüzde kullanılmıyor.
+
+### 8.8 Sunumda vurgulanacaklar
+
+- Kilitli testte görüntü F1 0.97, dış veride şans düzeyi. **İç doğrulama, dış geçerliliği garanti etmez.**
+- Sebep somut ve ölçülebilir: Kaggle'da AML ayrı bir çekim kaynağından geliyor ve model bu kaynak imzasını öğreniyor
+  (renk tablosu).
+- Genel amaçlı görüntü düzeltmeleri (Macenko, artırma) bu karışmayı çözmüyor; 360 etiketli dış hücre çözüyor.
+- Ön kontrolde örtüşme bulunmadı. Yöntemin sınırlı duyarlılığı ve kuralın neden ihtiyatlı seçildiği açıkça
+  raporlandı.
+- Komutlar:
+  ```bash
+  python -m src.external_validation allidb segmentasyon allidb2_teshis
+  python -m src.munich_overlap && python -m src.munich_overlap kapsamli
+  python -m src.external_validation munich_bolum munich_teshis
+  python -m src.domain_shift denemeler && python -m src.domain_shift sonuc
+  ```
+
+---
