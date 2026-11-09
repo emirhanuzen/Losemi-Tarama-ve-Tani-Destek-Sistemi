@@ -1,0 +1,5 @@
+kat,yapilandirma,ortak_goruntu,ortak_kaynak_grubu,egitimde_ALL-IDB_hucresi,egitimde_ALL-IDB_kaynakli_Kaggle,egitim_hucre,egitim_goruntu,test_goruntu,egitim_Kaggle_ALL,egitim_Kaggle_AML,egitim_Kaggle_Healthy,egitim_ALL-IDB_ALL,egitim_ALL-IDB_AML,egitim_ALL-IDB_Healthy,egitim_Münih_ALL,egitim_Münih_AML,egitim_Münih_Healthy,egitimde_Munih_hucresi,egitimde_Kaggle_test_hucresi
+A,,0.0,0.0,0.0,0.0,14717.0,2913.0,121.0,908.0,11441.0,376.0,0.0,0.0,0.0,0.0,1000.0,992.0,,
+A_idb_dahil,,0.0,0.0,0.0,,16721.0,3370.0,120.0,2324.0,11441.0,964.0,0.0,0.0,0.0,0.0,1000.0,992.0,,
+B,,0.0,0.0,,,15453.0,1745.0,540.0,2324.0,11441.0,964.0,464.0,0.0,260.0,0.0,0.0,0.0,0.0,
+C,,0.0,0.0,,,17384.0,3697.0,361.0,2318.0,11441.0,964.0,435.0,0.0,234.0,0.0,1000.0,992.0,,0.0

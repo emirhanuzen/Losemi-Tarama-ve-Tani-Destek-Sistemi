@@ -55,6 +55,7 @@ STAGE_OUTPUT_DIRS = {
     "evaluation": OUTPUTS_DIR / "evaluation",
     "risk": OUTPUTS_DIR / "risk",
     "external": OUTPUTS_DIR / "external",
+    "multicenter": OUTPUTS_DIR / "multicenter",
 }
 # ALL-IDB görüntüsü içeren figürler ve dış veri ara dosyaları (git dışı: data/ .gitignore kapsamında)
 EXTERNAL_PROCESSED_DIR = DATA_DIR / "processed" / "external"
@@ -431,3 +432,40 @@ MUNICH_TUNE_FRACTION = 0.4
 # Blast çekirdeği ~1-1.5 eritrosit çapında; merkez işaretleri elle konduğu için çekirdeğin içinde ama tam ortada
 # olmayabilir. Yarım çap, komşu çekirdeğe yanlış atamayı önleyecek kadar dar.
 XYC_MATCH_RADIUS_RATIO = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Çok merkezli eğitim ve laboratuvar dışarıda bırakma (Adım 9; python -m src.multicenter)
+# ---------------------------------------------------------------------------
+# Çok merkezli öznitelik tabloları (Kaggle + ALL-IDB + Münih, 58 + 15 biyolojik öznitelik; git dışı)
+MULTICENTER_DIR = PROCESSED_DATA_DIR / "multicenter"
+# Münih eğitim örneklemi (görüntü; yalnızca merkez hücre etiketli): kilitli AYAR/TEST ayrımının 300 görüntüsü + aynı
+# sınıftan sabit tohumla ek görüntüler. MYO 1000: AML'nin ikinci kaynağı (Kaggle AML ile aynı ağırlık tavanı, aşağıda).
+# LYT + NGS = 1000: ikisi birlikte Münih Healthy'si; tavan proje sınıfı düzeyinde olduğu için yarı yarıya.
+# Daha fazlası tavan yüzünden ağırlığı düşürülürdü; yalnızca çeşitlilik ekler, çıkarım süresini uzatır.
+MUNICH_TRAIN_IMAGES = {"MYO": 1000, "LYT": 500, "NGS": 500}
+# Kaynak dengesi: kaynak × sınıf başına toplam örnek ağırlığı tavanı (hücre). n > tavan ise her hücrenin ağırlığı
+# tavan / n (ör. Kaggle AML 11.441 hücre → 0.087), n ≤ tavan ise 1. 1000 ≈ Kaggle Healthy hücre sayısı (964), yani
+# Kaggle'ın üç sınıfı eşit ağırlık alır ve Münih bir sınıfta Kaggle'dan ağır basamaz. Tavanın altındaki küçük gruplar
+# (ALL-IDB: ~600 blast, ~300 sağlıklı) YUKARI ağırlıklandırılmaz: birkaç yüz hücreye 3-10 kat ağırlık vermek modeli o
+# hücreleri ezberlemeye iterdi. Ardından sınıf toplamları eşitlenir (her sınıf toplam ağırlığın 1/3'ü).
+MULTICENTER_SOURCE_CAP = 1000
+# İç CV (hiperparametre seçimi, her katın kendi eğitim verisinde): 3 kat StratifiedGroupKFold (grup = birleşik kaynak
+# grubu, katman = kaynak × sınıf). 3 kat: küçük kaynak × sınıf hücreleri (ALL-IDB Healthy ~300) her katta temsil edilir.
+MULTICENTER_INNER_FOLDS = 3
+# Küçük ızgara (HGB): öğrenme oranı 0.05 / 0.1 (Adım 5'te ikisi başa baş) × yaprak sayısı 15 / 31 (31 = sklearn
+# varsayılanı; 15 daha düzenli, kaynak imzasını ezberlemeye daha az yatkın). 300 iterasyon, erken durdurma kapalı
+# (iç doğrulama bölmesi grup gözetmez).
+MULTICENTER_GRID = [{"learning_rate": lr, "max_leaf_nodes": leaves, "max_iter": 300, "early_stopping": False}
+                    for lr in (0.05, 0.1) for leaves in (15, 31)]
+# Kaynak kısayolu eşiği: bir özniteliğin AYNI SINIF içinde kaynağı ayırma AUC'si (|AUC − 0.5| + 0.5, sınıf ve kaynak
+# çiftleri üzerinden en büyük) ≥ 0.90 ise "kaynak AUC'si çok yüksek" sayılır ve (iv) yapılandırmasında çıkarılır.
+# Sınıf içi ölçülür: kaynaklar farklı sınıf karışımına sahip (Münih'te ALL yok), sınıflar arası AUC biyolojiyi de
+# ölçerdi. 0.90: Adım 4'te görüntü tipi kısayolu için "belirgin" sayılan düzey (GLCM 0.95), sonuçlardan önce sabitlendi.
+MULTICENTER_SOURCE_AUC_MAX = 0.90
+# Ön kayıtlı seçim kuralı (outputs/multicenter/secim_kurali.csv; LOSO sonuçlarından ÖNCE yazılır):
+# skor = (Kat A ALL tiplemesi oranı + Kat B dengeli doğruluk) / 2 en yüksek; Kat C görüntü makro F1 mevcut modele
+# göre en fazla 0.02 düşebilir.
+MULTICENTER_MAX_KAGGLE_DROP = 0.02
+# Çok merkezli son model (üç kaynağın tamamı, temperature kalibrasyonlu). Varsayılan model (ACTIVE_MODEL_FILE) DEĞİŞMEZ.
+MULTICENTER_MODEL_FILE = "losemi_siniflandirici_v3_kalibre"

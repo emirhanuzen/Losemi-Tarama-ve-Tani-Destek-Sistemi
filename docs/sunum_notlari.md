@@ -2083,3 +2083,238 @@ Münih TEST'e burada, yapılandırma başına bir kez bakıldı (`dis_dogrulama_
   ```
 
 ---
+
+## Adım 9 — Çok Merkezli Eğitim
+
+### 9.1 Neden gerekti, ne yapıldı
+
+- Adım 8: yalnızca Kaggle ile eğitilen model, Kaggle AML kaynağının çekim imzasını (parlak zemin, doygun mor çekirdek)
+  "AML" olarak öğrenmişti. Münih'te dengeli doğruluk 0.32 (şans), ALL-IDB'de 75 ALL görüntüsünün yalnızca 2'si ALL
+  tiplendi. Münih AYAR'ından 360 hücre eğitime eklenince Münih TEST 0.91-0.93'e çıktı. Ama bu artık dış doğrulama
+  değildi.
+- Bu adımın sorusu: **Üç laboratuvarla (Kaggle, ALL-IDB, Münih) eğitilen bir model, eğitimde HİÇ görmediği bir
+  laboratuvarda ALL'ı AML'den ayırabiliyor mu?** Ölçüm, laboratuvar dışarıda bırakma (LOSO) ile yapıldı.
+- Kod: `src/bio_features.py` (15 biyolojik öznitelik), `src/multicenter.py` (veri, ağırlıklar, LOSO, laboratuvar
+  kısayolu, v3). Çıktılar `outputs/multicenter/` altında. Dış veri öznitelik tabloları ve ALL-IDB içeren tahmin
+  tabloları `data/processed/multicenter/` altında (git dışı). Bu adımda görüntü içeren figür üretilmedi.
+- **Varsayılan model değiştirilmedi** (`losemi_siniflandirici_v2_kalibre`).
+
+### 9.2 Eğitim kaynakları ve etiketler
+
+| Kaynak | Etiketli hücre | Kural |
+|---|---|---|
+| Kaggle | ALL 3080, AML 14058, Healthy 1178 | v2 ayrımı, mevcut hücre etiketleri (görüntü etiketi) |
+| ALL-IDB2 | ALL 130, Healthy 130 | yalnızca merkez hücre; `_1` → ALL, `_0` → Healthy |
+| ALL-IDB1 | ALL 334, Healthy 130 | `_1`: `.xyc` blast merkeziyle eşleşen çekirdek → ALL (510 merkez → 334 çekirdek; birleşik blastlar tek çekirdek), eşleşmeyenler kullanılmadı; `_0`: tüm çekirdekler → Healthy |
+| Münih | AML 1000, Healthy 992 | yalnızca merkez hücre; MYO → AML, LYT + NGS → Healthy; Adım 8'de dışlanan 14 görüntü ve MYB hariç |
+
+- Münih örneklemi: kilitli AYAR/TEST ayrımının 900 görüntüsü + sabit tohumla seçilen ek görüntüler. Toplam MYO 1000,
+  LYT 500, NGS 500 (`munih_ornegi.csv`). 8 görüntüde hiç çekirdek bulunamadı.
+- **Hasta kimliği yok (kısıt):** `annotations.dat` dört sütun içeriyor: dosya, birinci etiket ve iki yeniden
+  etiketleme. Hasta kimliği olmadığı için Münih görüntüleri hastaya göre gruplanamadı; her görüntü ayrı grup sayıldı.
+  Aynı hastanın hücreleri iç CV'de iki tarafa düşebilir. Bu, iç CV'yi biraz iyimser yapar ama LOSO'yu etkilemez (Kat
+  B'de Münih eğitimde hiç yok). Ayrıca MYO/LYT/NGS görüntülerinin %12'si yeniden etiketlenmiş ve bazılarında
+  etiketleyiciler ayrışıyor (ör. LYT → MYO). Etiketler değiştirilmedi.
+- **Birleşik kaynak grupları:** Kaggle `kaynak_grup_id`, kabul edilmiş Kaggle ↔ ALL-IDB eşleşmeleri ve her ALL-IDB2
+  kırpımının kesildiği ALL-IDB1 yayması union-find ile birleştirildi. İç CV katları ve kat doğrulaması bu gruplarla
+  yapıldı.
+
+**Kaynak dengesi** (`config.MULTICENTER_SOURCE_CAP = 1000`):
+- Kaynak × sınıf grubunun hücre sayısı 1000'den fazlaysa her hücrenin ağırlığı 1000 / n, değilse 1. Ardından sınıf
+  toplamları eşitlenir.
+- 1000, Kaggle Healthy hücre sayısına yakın. Bu tavanla Kaggle'ın üç sınıfı eşit ağırlık alır (Kaggle AML 11.441
+  hücre → hücre başına 0.087) ve Münih hiçbir sınıfta Kaggle'dan ağır basamaz.
+- Tavanın altındaki ALL-IDB grupları yukarı ağırlıklandırılmadı: birkaç yüz hücreye 3-10 kat ağırlık vermek modeli
+  ezberlemeye iterdi.
+- Kat C'de toplam ağırlık payları: Kaggle ALL 0.23, Kaggle AML 0.17, Kaggle Healthy 0.15, ALL-IDB ALL 0.10, ALL-IDB
+  Healthy 0.04, Münih AML 0.17, Münih Healthy 0.15 (`kat_agirliklari.csv`).
+
+### 9.3 Biyolojik öznitelikler (15) ve tıbbi anlamı
+
+Mevcut 58 özniteliğe eklendi. Hepsi referans ölçekte (eritrosit çapı 10 px) hesaplanır. Mutlak renk kullanmazlar;
+yerel kontrasta veya şekle dayanırlar.
+
+| Grup | Öznitelikler | Tıbbi anlamı |
+|---|---|---|
+| Nükleol (3) | çekirdek içinde beyaz top-hat (5x5) ≥ 4 L\* olan bölgelerin sayısı, alan oranı, kontrastı | Blastlarda 1-5 belirgin nükleol bulunur. Miyeloblastta genellikle daha çok ve belirgindir, lenfoblastta az ve siliktir. Olgun hücrede görünmez. |
+| Sitoplazma granülerliği (2) | çekirdek çevresi halkasında Laplace std, küçük koyu nokta (siyah top-hat) oranı | Miyeloid seri granüllüdür, Auer çubuğu AML'ye özgüdür; lenfoblast agranülerdir. |
+| Kromatin (6) | uniform LBP (R=1, R=2) entropisi ve uniform olmayan kod oranı; GLCM d=5 contrast ve homogeneity | Blast kromatini ince ve dağınıktır, olgun lenfositinki kaba ve topaklıdır. LBP parlaklığa ve dönmeye duyarsızdır. |
+| Kenar düzensizliği (4) | konveksite, en derin çukurun eşdeğer çapa oranı, radyal uzaklığın değişim katsayısı, Fourier ≥ 3. harmonik enerji oranı | Miyeloblast ve monoblast çekirdeği çentikli ve kıvrımlıdır, nötrofil çekirdeği lobludur; lenfoblast çekirdeği düzgündür. |
+
+- N/C oranı eklenmedi: yalnızca yakın çekimlerde hesaplanabiliyor ve varlığı görüntü tipini ele veriyor.
+- **Çözünürlük kısıtı:** referans ölçekte bir nükleol ~1.5-4 px, granüller ise piksel altı. Kaggle yaymaları zaten bu
+  çözünürlükte. Bu yüzden ölçüm kaba.
+
+**Kısayol testi** (`oznitelik_kisayol.csv`, `oznitelik_kaynak_auc.png`). Kaynak AUC'si, her öznitelik için aynı sınıf
+içinde kaynağı ayırma AUC'sidir (yönden bağımsız; sınıf × kaynak çiftlerinin en büyüğü). Aynı sınıf içinde ölçüldü,
+çünkü kaynakların sınıf karışımı farklı.
+- 73 öznitelikten 9'u ≥ 0.90 ve hepsi renk: çekirdek b\* 1.000, S 0.999, a\* 0.997, çekirdek − halka b\* farkı
+  0.992, ΔE 0.980. **Mutlak çekirdek rengi, Münih'i sınıf içinde kusursuz ele veriyor** (Adım 8 teşhisiyle aynı).
+- Biyolojik özniteliklerin hiçbiri eşiği geçmiyor. En yüksekleri nükleol alan oranı (0.86), yarıçap CV (0.84) ve
+  GLCM d=5 homogeneity (0.84).
+- Görüntü tipi (Kaggle yayma / yakın çekim): GLCM d=5 homogeneity (0.87) ve nükleol kontrastı (0.83) tipi belirgin
+  biçimde taşıyor. Bunlar dikkatle yorumlanmalı.
+- ALL ile AML'yi tüm kaynaklarda tek başına ayırma AUC'si en fazla 0.69 (nükleol alan oranı). Bilgi taşıyorlar ama
+  zayıflar.
+- Mutlak zemin rengi öznitelikleri (`renk_halka_*_ort`) tabloda işaretlendi. Hiçbiri 0.90'ı geçmedi; zemin
+  normalizasyonu işini yapıyor.
+
+### 9.4 LOSO'nun mantığı
+
+Her katta bir laboratuvar tamamen dışarıda bırakılır. Model diğer laboratuvarlarla eğitilir ve dışarıdakinde sınanır.
+Böylece "yeni bir laboratuvara geldiğinde ne olur?" sorusu, test kaynağı eğitime hiç girmeden yanıtlanır.
+
+| Kat | Eğitim | Test | Ana ölçü |
+|---|---|---|---|
+| A | Kaggle geliştirme (**kaynağı ALL-IDB olan Kaggle görüntüleri hariç**) + Münih | ALL-IDB güvenli 121 görüntü | ALL görüntülerinde ALL tiplemesi, Healthy özgüllüğü |
+| A (karş.) | Kaggle geliştirme (tümü) + Münih | ALL-IDB güvenli 120 görüntü | aynı |
+| B | Kaggle geliştirme + ALL-IDB | Münih TEST 540 görüntü (Adım 8'in kilitli %60'ı) | MYO→AML, LYT/NGS→Healthy, dengeli doğruluk |
+| C | Kaggle geliştirme + Münih + ALL-IDB | Kaggle v2 kilitli test 361 görüntü | görüntü makro F1 |
+
+- **Sızıntı doğrulaması kodla yapıldı** (`verify_fold`, `kat_dogrulama.csv`). Tüm kontroller 0 çıktı:
+  - ortak görüntü ve ortak birleşik kaynak grubu yok,
+  - A'da eğitimde ALL-IDB hücresi ve ALL-IDB kaynaklı Kaggle görüntüsü yok,
+  - B'de Münih yok, C'de Kaggle test görüntüsü yok.
+- **Doğrulamanın yakaladığı iki bağlantı:**
+  1. Adım 8'de güvenli sayılan `IDB1/Im036_0` ile Kaggle'da görülmüş `Im103_0`'dan aynı dört ALL-IDB2 kırpımı
+     kesilmiş (Im134/135/244/245_0). Yani iki yayma aynı bölgeyi örtüyor ve Im036_0, Kaggle'daki 8 sağlıklı
+     görüntüyle dolaylı olarak bağlı. Ana Kat A etkilenmiyor, çünkü o Kaggle görüntüleri zaten eğitim dışında.
+     Karşılaştırma katında Im036_0 testten çıkarıldı (120 görüntü).
+  2. v2 ayrımında kaynak grubu 17 (geliştirme, 3 görüntü) ile grup 18 (test, 4 görüntü), aynı bölgeyi örten
+     `Im020_1` / `Im021_1` yaymalarından geliyor (ortak kırpımlar Im056/057_1). **Yani kilitli v2 ayrımında küçük
+     bir artık sızıntı var.** Ayrım değiştirilmedi. Kat C'de bu 3 geliştirme görüntüsü eğitimden çıkarıldı. Mevcut
+     model onlarla eğitildiği için karşılaştırmada küçük bir avantajı var (361 test görüntüsünün 4'ü).
+- **Hiperparametreler:** her katın kendi eğitim verisinde, 3 katlı grup iç CV ile seçildi. Izgara: öğrenme oranı
+  0.05/0.1 × yaprak 15/31; ölçüt ağırlıklı makro F1 (`ic_cv_izgara.csv`). Test kaynağına bakılmadı.
+- (iv) yapılandırmasının çıkardığı öznitelikler her katın eğitim verisinde ölçüldü: A'da 13, B'de 1, C'de 12.
+- Risk seviyesi için mevcut eşikler (0.7591 / 0.8229) kullanıldı; LOSO modellerinde eşik yeniden seçilmedi.
+- **Ön kayıtlı seçim kuralı** (`secim_kurali.csv`, LOSO'dan önce yazıldı): skor = (Kat A ALL tiplemesi + Kat B
+  dengeli doğruluk) / 2. Kısıt: Kat C görüntü makro F1, mevcut modele göre en fazla 0.02 düşebilir.
+
+### 9.5 Sonuçlar
+
+`loso_ozet.csv`, `loso_sonuclari.png`, `karisiklik_kat_{A,B,C}.png`
+
+| Yapılandırma | A: ALL→ALL | A: Healthy özgüllük | A: lösemi duyarlılık | A (karş.): ALL→ALL | B: dengeli doğ. | B: MYO / LYT / NGS | C: görüntü F1 | C: hücre F1 | Skor |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| (i) Mevcut | 0.027 | 0.435 | 0.920 | 0.027 | 0.320 | 0.92 / 0.04 / 0.00 | 0.967 | 0.949 | 0.174 |
+| **(ii) Çok merkezli, 58** | 0.067 | 0.283 | 0.987 | 0.027 | 0.333 | 0.91 / 0.09 / 0.00 | 0.961 | 0.946 | **0.200** |
+| (iii) + biyolojik (73) | 0.040 | 0.326 | 0.973 | 0.027 | 0.322 | 0.87 / 0.10 / 0.00 | 0.967 | 0.945 | 0.181 |
+| (iv) (iii) − kaynak AUC ≥ 0.90 | 0.027 | 0.717 | 0.920 | 0.027 | 0.337 | 0.88 / 0.13 / 0.00 | 0.956 | 0.927 | 0.182 |
+
+- **Kurala göre seçilen: (ii).** Hepsi Kat C kısıtını sağlıyor. Ama skor farkları gürültü düzeyinde: Kat A'da (ii)
+  75 ALL görüntüsünün 5'ini, mevcut model 2'sini doğru tipliyor.
+- **Ana sonuç: çok merkezli eğitim, laboratuvardan bağımsız bir ALL/AML ayrımı sağlamadı.**
+  - Kat A: ALL-IDB'deki ALL görüntülerinin %91-93'ü hâlâ AML tipleniyor (IDB1'de 17 görüntünün 16'sı). Kaggle'ın
+    ALL-IDB kaynaklı görüntüleri eğitime eklense de bu değişmiyor (karşılaştırma katında hepsi 0.027).
+  - Kat B: ALL-IDB eklemek Münih'i kurtarmıyor. Nötrofillerin hiçbiri Healthy tiplenmiyor; lenfositlerin en fazla
+    %13'ü Healthy.
+  - Kat C: Kaggle'daki başarı korunuyor (görüntü F1 0.956-0.967).
+- **Model laboratuvar içinde çalışıyor, laboratuvarlar arasında çalışmıyor** (`kaynak_bagimli_tipleme.csv`, iç CV
+  katlar dışı):
+  - Eğitimdeki her kaynak × sınıfta duyarlılık yüksek. Ör. Kat C'de ALL-IDB ALL 0.98, Kaggle ALL 0.94, Münih AML
+    0.96, Münih Healthy 0.95, ALL-IDB Healthy 0.88.
+  - Aynı model, dışarıda bırakılan laboratuvarda çöküyor. Yani her laboratuvarın sınıfları ayrı ayrı öğreniliyor;
+    laboratuvarlar arası ortak bir biyolojik kural öğrenilmiyor.
+- **Neden?**
+  - Kat A'da ALL yalnızca tek bir laboratuvardan geliyor: Kaggle'ın kaynağı bilinmeyen ALL'ı (195 yakın çekim + 123
+    yayma). Münih'te ALL yok. Tek laboratuvardan gelen bir sınıf o laboratuvarın görünümüyle karışır ve LOSO bunu
+    ayıramaz.
+  - Kat B'de de Münih benzeri bir çekim (100x, parlak zemin) eğitimde yok.
+- **Kaynak AUC'si yüksek öznitelikleri çıkarmak (iv)**, Kat A'da Healthy özgüllüğünü 0.43'ten 0.72'ye çıkardı. Ama
+  ALL tiplemesini değiştirmedi ve Kat C hücre F1'ini düşürdü (0.927).
+
+**Yeni özniteliklerin katkısı:**
+- (ii) → (iii) farkı (+15 biyolojik öznitelik): Kat A ALL tiplemesi 0.067 → 0.040, Kat B 0.333 → 0.322, Kat C
+  görüntü F1 0.961 → 0.967. **Laboratuvarlar arası genellemeye ölçülebilir bir katkıları yok;** farklar 1-3 görüntü
+  düzeyinde.
+- İç CV'deki katkıları da çok küçük (ağırlıklı makro F1 +0.000-0.003).
+- Öznitelik önemi (`oznitelik_onemi.png`, `oznitelik_onemi.csv`; (iii) yapılandırması, iç katta permütasyon):
+  - Model ağırlıklı olarak çekirdek rengine dayanıyor: ilk 11 öznitelik renk (çekirdek V ortalaması, F1 düşüşü
+    0.073).
+  - Biyolojik özniteliklerin en iyisi 12. sırada: sitoplazma Laplace std (0.007). Onu nükleol alan oranı (17.) ve
+    yarıçap CV (18.) izliyor; 5'inin önemi sıfır ya da negatif.
+
+### 9.6 Laboratuvar kısayolu testi
+
+`laboratuvar_kisayolu.csv`, `laboratuvar_kisayolu.png`. Her katın eğitim verisinde, yalnızca özniteliklerden hücrenin
+hangi laboratuvardan geldiğini tahmin eden bir HGB eğitildi (grup iç CV, katlar dışı; kaynak × sınıf grupları eşit
+ağırlıklı).
+
+| Kat eğitimi | Kaynaklar | 58 öznitelik | 73 (biyolojik dahil) | (iv) ayıklı | Yalnız 15 biyolojik |
+|---|---|---:|---:|---:|---:|
+| A | Kaggle + Münih | 0.999 | 0.999 | 0.999 | 0.940 |
+| B | Kaggle + ALL-IDB | 0.984 | 0.985 | 0.985 | 0.888 |
+| C | üçü | 0.993 | 0.993 | 0.992 | 0.903 |
+
+- Sınıf içi kaynak AUC'si de 0.96-1.00 (ör. Kat C: ALL 0.965, AML 0.998, Healthy 0.990). **Aynı sınıftaki bir
+  hücrenin hangi laboratuvardan geldiği neredeyse kusursuz tahmin edilebiliyor.**
+- Yüksek AUC'li öznitelikleri tek tek çıkarmak bunu değiştirmiyor (0.999 → 0.999). Laboratuvar imzası birçok
+  özniteliğe dağılmış; çok değişkenli birleşim onu yine buluyor.
+- Yalnızca biyolojik öznitelikler bile laboratuvarı 0.89-0.94 AUC ile ele veriyor. Çözünürlük, boyama ve odak
+  farkları doku ve kenar ölçülerine de yansıyor.
+- **Yorum:** sınıflandırıcı için laboratuvar kimliği, sınıftan daha kolay öğrenilen bir sinyal. Bir sınıf tek bir
+  laboratuvarla karıştığında (Kaggle AML, Kaggle ALL), model sınıf yerine laboratuvarı öğreniyor.
+
+### 9.7 Son model (v3)
+
+- Seçilen yapılandırma (ii) ile **üç kaynağın tüm etiketli hücreleri** kullanıldı: 21.032 hücre (Kaggle geliştirme
+  + test 18.316, ALL-IDB 724, Münih 1.992). Aynı kaynak ağırlıkları uygulandı.
+- İç CV ile seçilen parametreler: öğrenme oranı 0.05, yaprak 31, 300 iterasyon (ağırlıklı makro F1 0.945;
+  `v3_ic_cv_izgara.csv`).
+- **Temperature kalibrasyonu elle yapıldı:** T = 2.04, iç CV katlar dışı olasılıklarında ağırlıklı log loss'u en aza
+  indiren değer. sklearn'ün kalibratörü Pipeline'a örnek ağırlığı iletmediği için bu yol seçildi. En olası sınıf
+  değişmez.
+- **Risk eşikleri çok kaynaklı veriden yeniden seçildi:** Düşük < 0.4621 ≤ Orta < 0.5132 ≤ Yüksek
+  (`v3_risk_esik_adaylari.csv`, `v3_risk_esikleri_kaynak.csv`).
+  - Skorlar: tüm hücrelerin katlar dışı tahminlerinden görüntü risk skoru; 4.085 görüntü.
+  - Duyarlılık ve özgüllük kaynak ortalaması olarak hesaplandı; yoksa tek hücreli Münih görüntüleri sayıca baskın
+    olurdu.
+  - Duyarlılık hedefi (≥ 0.98) sağlandı: kaynak ortalaması 0.985.
+  - **Özgüllük hedefi (≥ 0.95) hiçbir eşikte sağlanamadı:** en iyi değer 0.931, o yüzden en özgül aday seçildi. Tek
+    hücreli görüntülerde (Münih, ALL-IDB2) tek bir hatalı hücre skoru 1'e çıkarıyor.
+  - Kaynak bazında "Yüksek" alan Healthy görüntü oranı: Kaggle %3.4, Münih %5.6, ALL-IDB %11.7. "Düşük" alan lösemi
+    görüntüsü oranı: %0.5 / %3.5 / %0.6.
+  - Eşikler mevcut modelinkinden (0.76 / 0.82) çok düşük. Sebep: ALL-IDB1 ALL yaymalarında blast olmayan hücreler de
+    var, bu yüzden lösemi görüntülerinin anormal oranı tam 1 değil.
+- Kayıt: `models/losemi_siniflandirici_v3_kalibre.joblib` (+ `.json`, `v3_model_ozeti.csv`). **Varsayılan model
+  değiştirilmedi;** pipeline, arayüz ve PDF hâlâ v2'yi kullanıyor.
+- **v3'ün dış test seti yok.** Üç kaynağın hepsi eğitimde. Başarısı ancak LOSO sonuçlarıyla tahmin edilebilir: yeni
+  bir laboratuvarda ALL tiplemesi ~0.07, Münih benzeri bir laboratuvarda dengeli doğruluk ~0.33. Bu üç laboratuvara
+  benzeyen görüntülerde iç CV ~0.94.
+- **v3 varsayılan yapılmamalı:**
+  1. LOSO, (ii)'nin mevcut modelden anlamlı biçimde iyi olmadığını gösteriyor. Skor farkı 0.026, yani Kat A'da 3
+     görüntü.
+  2. Kat A'da Healthy özgüllüğü düştü (0.43 → 0.28).
+  3. v3'ün bağımsız test seti yok; v2'nin kilitli testi var.
+  4. v3'ün tek kazancı Münih ve ALL-IDB'ye benzeyen görüntüleri artık "görmüş" olması. Bu yeni laboratuvarlara
+     genelleme değil, eğitim kapsamının genişlemesi.
+  - Münih/ALL-IDB görüntüleriyle çalışacak bir demo için v3 ayrı bir seçenek olarak sunulabilir, ama bu sınırlamayla
+    birlikte.
+
+### 9.8 Kısıtlar
+
+- Üç laboratuvar az. ALL iki kaynaktan (Kaggle, ALL-IDB), AML de iki kaynaktan (Kaggle, Münih) geliyor. Her LOSO
+  katında, dışarıda bırakılan laboratuvarın sınıfı eğitimde tek bir laboratuvarla temsil ediliyor.
+- Kaggle'ın klinik kaynağı belirsiz. Kaggle ALL ve Kaggle AML'nin her biri muhtemelen tek bir laboratuvardan geliyor.
+- Münih'te hasta kimliği yok (görüntü düzeyinde gruplandı). Münih yalnızca tek hücre kırpımları içeriyor; ALL-IDB2
+  de öyle. Bu görüntülerde risk skoru 0 ya da 1 olabiliyor.
+- Biyolojik öznitelikler referans ölçekte kaba; nükleol ve granül çözünürlük sınırında.
+- Kat A test seti küçük (75 ALL / 46 Healthy): 1 görüntü ≈ 0.013 ALL tiplemesi.
+- LOSO modellerinde risk eşikleri yeniden seçilmedi (mevcut eşikler kullanıldı).
+
+### 9.9 Sunumda vurgulanacaklar
+
+- Aynı laboratuvardaki iç doğrulama ile laboratuvar dışarıda bırakma arasında uçurum var: iç CV makro F1
+  ~0.93-0.94, görülmemiş laboratuvarda ALL tiplemesi 0.03-0.07 ve Münih dengeli doğruluk 0.33.
+- Laboratuvar kimliği özniteliklerden AUC 0.99 ile tahmin edilebiliyor: klasik özniteliklerle bile güçlü bir
+  kısayol.
+- Adım 8'deki 0.91, test laboratuvarı eğitimde olduğu için elde edildi.
+- Çözüm için daha fazla laboratuvar gerekli: özellikle ALL ve AML'nin her birinin birden çok laboratuvardan geldiği
+  veri. Bir alternatif de her yeni laboratuvar için küçük bir etiketli uyarlama kümesi.
+- Komutlar:
+  ```bash
+  python -m src.multicenter oznitelik && python -m src.multicenter kisayol && python -m src.multicenter kural
+  python -m src.multicenter loso && python -m src.multicenter ozet && python -m src.multicenter laboratuvar
+  python -m src.multicenter son_model && python -m src.multicenter gorseller
+  ```

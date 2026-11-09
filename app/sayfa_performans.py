@@ -282,6 +282,56 @@ def external_validation() -> None:
     show_figure(EXT / "renk_dagilimi_kaggle_allidb_munih.png", "Normalizasyon öncesi ve sonrası zemin/çekirdek rengi.")
 
 
+MC = STAGE_OUTPUT_DIRS["multicenter"]
+LOSO_COLUMNS = {
+    "ad": "Yapılandırma", "A_ALL_tipleme": "A: ALL-IDB ALL→ALL", "A_healthy_ozgulluk": "A: Healthy özgüllük",
+    "A_duyarlilik": "A: lösemi duyarlılık", "Aidb_ALL_tipleme": "A (ALL-IDB kaynaklı Kaggle dahil): ALL→ALL",
+    "B_dengeli_dogruluk": "B: Münih dengeli doğ.", "B_duyarlilik_MYO": "B: MYO→AML", "B_duyarlilik_LYT": "B: LYT→Healthy",
+    "B_duyarlilik_NGS": "B: NGS→Healthy", "C_goruntu_makro_f1": "C: Kaggle test görüntü F1",
+    "C_hucre_makro_f1": "C: Kaggle test hücre F1", "skor": "Ön kayıtlı skor", "kisit_saglandi": "Kısıt",
+    "secilen": "Seçilen",
+}
+
+
+def multicenter() -> None:
+    """Çok merkezli eğitim ve laboratuvar dışarıda bırakma (Adım 9): LOSO tablosu, laboratuvar kısayolu, v3."""
+    st.subheader("Çok merkezli eğitim (LOSO)")
+    st.markdown(COK_MERKEZLI_OZET)
+    summary = output_csv("multicenter", "loso_ozet.csv")
+    if summary is not None:
+        summary = summary[[c for c in LOSO_COLUMNS if c in summary.columns]].rename(columns=LOSO_COLUMNS)
+    show_table(summary)
+    show_figure(MC / "loso_sonuclari.png", "Her katta test kaynağı eğitime hiç girmedi (kodla doğrulandı).")
+    for fold, caption in [("A", "Kat A: ALL-IDB güvenli görüntüler (görüntü tahmini)."),
+                          ("B", "Kat B: Münih TEST (merkez hücre)."), ("C", "Kat C: Kaggle kilitli test (hücre).")]:
+        show_figure(MC / f"karisiklik_kat_{fold}.png", caption)
+    st.markdown("**Laboratuvar kısayolu testi (öznitelikten kaynak tahmini; 0.5 = ayırt edilemiyor)**")
+    lab = output_csv("multicenter", "laboratuvar_kisayolu.csv")
+    if lab is not None:
+        lab = lab.rename(columns={"kat": "Kat eğitimi", "oznitelik_kumesi": "Öznitelik kümesi", "n_oznitelik": "n",
+                                  "kaynaklar": "Kaynaklar", "kaynak_makro_auc": "Kaynak AUC (tümü)",
+                                  "sinif_ici_kaynak_auc_ALL": "Sınıf içi AUC: ALL",
+                                  "sinif_ici_kaynak_auc_AML": "Sınıf içi AUC: AML",
+                                  "sinif_ici_kaynak_auc_Healthy": "Sınıf içi AUC: Healthy"})
+    show_table(lab, skip=("n",))
+    show_figure(MC / "laboratuvar_kisayolu.png")
+    c1, c2 = st.columns(2)
+    with c1:
+        show_figure(MC / "oznitelik_onemi.png", "Permütasyon önemi; turuncu: yeni biyolojik öznitelikler.")
+    with c2:
+        show_figure(MC / "oznitelik_kaynak_auc.png", "Öznitelik başına sınıf içi kaynak AUC'si.")
+    st.markdown("**Kaynağa bağlı tipleme (iç CV, katlar dışı; aynı sınıf farklı kaynaklarda nasıl tipleniyor?)**")
+    typ = output_csv("multicenter", "kaynak_bagimli_tipleme.csv")
+    if typ is not None:
+        typ = typ[typ["kat"].isin(["A", "B", "C"])][["kat", "yapilandirma", "sinif", "kaynak", "n", "duyarlilik",
+                                                      "tip_dogrulugu_anormalde"]].rename(columns={
+            "kat": "Kat", "yapilandirma": "Yapılandırma", "sinif": "Sınıf", "kaynak": "Kaynak", "duyarlilik": "Duyarlılık",
+            "tip_dogrulugu_anormalde": "Anormal tahminde doğru tip"})
+    show_table(typ, skip=("n",))
+    st.markdown("**Son model (v3; varsayılan DEĞİL)**")
+    show_table(output_csv("multicenter", "v3_model_ozeti.csv"))
+
+
 # Adım 8 özeti (docs/sunum_notlari.md "Adım 8 — Dış Doğrulama ve Alan Kayması" ile aynı sonuçlar)
 DIS_DOGRULAMA_OZET = """
 Model hiç görmediği iki veri setinde sınandı. **Kaggle'daki başarı başka merkezlere genellenmiyor.**
@@ -311,8 +361,34 @@ def page() -> None:
     st.title("Model Performansı")
     disclaimer()
     tabs = st.tabs(["Model karşılaştırması", "Kilitli test", "Risk seviyesi", "Ablasyon", "Öğrenme eğrisi",
-                    "Kalibrasyon", "Sızıntı", "Dış doğrulama"])
+                    "Kalibrasyon", "Sızıntı", "Dış doğrulama", "Çok merkezli (LOSO)"])
     for tab, section in zip(tabs, [model_comparison, locked_test, risk_levels, ablation, learning_curve,
-                                   calibration, leakage, external_validation]):
+                                   calibration, leakage, external_validation, multicenter]):
         with tab:
             section()
+
+
+# Adım 9 özeti (docs/sunum_notlari.md "Adım 9 — Çok Merkezli Eğitim" ile aynı sonuçlar)
+COK_MERKEZLI_OZET = """
+Kaggle, ALL-IDB ve Münih birlikte kullanıldı. Başarı **laboratuvar dışarıda bırakma (LOSO)** ile ölçüldü: her katta
+test laboratuvarı eğitime hiç girmez (kodla doğrulandı).
+
+- **Kat A:** Kaggle (ALL-IDB kaynaklı görüntüler hariç) + Münih ile eğitim → ALL-IDB'de test.
+- **Kat B:** Kaggle + ALL-IDB ile eğitim → Münih TEST'te test.
+- **Kat C:** üç kaynakla eğitim → Kaggle kilitli testte test.
+
+Mevcut 58 özniteliğe 15 biyolojik öznitelik eklendi: nükleol, sitoplazma granülerliği, kromatin dokusu, çekirdek
+kenar düzensizliği. Seçim kuralı sonuçlardan önce sabitlendi.
+
+- **Çok merkezli eğitim, laboratuvardan bağımsız bir ALL/AML ayrımı sağlamadı.** Görülmemiş laboratuvarda ALL
+  görüntülerinin %91-93'ü hâlâ AML tipleniyor (ALL→ALL 0.03-0.07). Münih'te dengeli doğruluk 0.32-0.34, yani şans
+  düzeyi.
+- Model **laboratuvar içinde** çalışıyor: eğitimdeki her kaynak × sınıfta duyarlılık 0.88-0.98. Ama görmediği
+  laboratuvara genellenmiyor.
+- **Laboratuvar kısayolu:** öznitelikler hücrenin hangi laboratuvardan geldiğini AUC 0.98-0.999 ile ele veriyor,
+  aynı sınıf içinde de. Model sınıf yerine laboratuvarı öğrenebiliyor.
+- Biyolojik özniteliklerin laboratuvarlar arası genellemeye ölçülebilir bir katkısı yok.
+- Kurala göre seçilen (ii), mevcut modelden yalnızca gürültü düzeyinde iyi: 75 ALL görüntüsünün 5'ine karşı 2'si.
+- Üç kaynağın tamamıyla eğitilen **v3 kaydedildi ama varsayılan yapılmadı**. Dış test seti kalmadı; başarısı ancak
+  LOSO ile tahmin edilebilir.
+"""

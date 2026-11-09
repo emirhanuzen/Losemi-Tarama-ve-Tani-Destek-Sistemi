@@ -1,0 +1,74 @@
+oznitelik,onem,onem_std,kategori,yapilandirma
+renk_cekirdek_V_ort,0.07275497275334586,0.00191608761287512,mutlak çekirdek rengi,iii_cok_merkezli_bio
+renk_cekirdek_H_ort,0.027278827577093323,0.0020637727333181572,mutlak çekirdek rengi,iii_cok_merkezli_bio
+renk_halka_a_std,0.02067573276729806,0.0012008373230403585,renk (std / fark),iii_cok_merkezli_bio
+renk_cekirdek_H_std,0.01948628985651139,0.0016208835570449321,renk (std / fark),iii_cok_merkezli_bio
+renk_cekirdek_V_std,0.014908106172458932,0.0003782658120102269,renk (std / fark),iii_cok_merkezli_bio
+renk_halka_V_ort,0.012214589746643542,0.001159250371120711,mutlak zemin rengi,iii_cok_merkezli_bio
+renk_halka_V_std,0.011830366917086757,0.002846295375875874,renk (std / fark),iii_cok_merkezli_bio
+renk_cekirdek_L_std,0.010896796304297776,0.0006310926640508514,renk (std / fark),iii_cok_merkezli_bio
+renk_cekirdek_a_ort,0.008465729456274254,0.002016046998791685,mutlak çekirdek rengi,iii_cok_merkezli_bio
+sekil_alan,0.008336839048871059,0.0005200718526923389,şekil,iii_cok_merkezli_bio
+renk_cekirdek_L_ort,0.007218741197178025,0.0011972641128046929,mutlak çekirdek rengi,iii_cok_merkezli_bio
+doku_bio_sitoplazma_laplace_std,0.007216873309674206,0.000221342587233141,biyolojik,iii_cok_merkezli_bio
+renk_cekirdek_S_std,0.006840720897126469,0.0010814087845263593,renk (std / fark),iii_cok_merkezli_bio
+renk_cekirdek_S_ort,0.005947851283551316,0.001960982188404411,mutlak çekirdek rengi,iii_cok_merkezli_bio
+sekil_kucuk_eksen,0.005324632674521805,0.0007250778969937558,şekil,iii_cok_merkezli_bio
+doku_correlation_d3,0.005266849386046972,0.0017382293473651523,doku,iii_cok_merkezli_bio
+doku_bio_nukleol_alan_orani,0.004615560065599785,0.0008448201828328423,biyolojik,iii_cok_merkezli_bio
+sekil_bio_yaricap_cv,0.004504747388703027,0.0006368192874828151,biyolojik,iii_cok_merkezli_bio
+renk_fark_L,0.004462626349309977,0.0016066625631426866,renk (std / fark),iii_cok_merkezli_bio
+renk_halka_L_ort,0.004169054459864337,0.00037962901770400637,mutlak zemin rengi,iii_cok_merkezli_bio
+renk_halka_S_ort,0.003879763797092021,0.00022447226072258572,mutlak zemin rengi,iii_cok_merkezli_bio
+renk_halka_L_std,0.003556977530969544,0.00020893636238821414,renk (std / fark),iii_cok_merkezli_bio
+doku_bio_lbp_r2_duzensiz,0.003393697127616354,0.0006579596535884678,biyolojik,iii_cok_merkezli_bio
+renk_halka_a_ort,0.0033492471907567247,0.0007891866750522099,mutlak zemin rengi,iii_cok_merkezli_bio
+sekil_eksen_orani,0.003324910640870186,0.0009317939440437699,şekil,iii_cok_merkezli_bio
+renk_halka_H_std,0.0032724358270811806,0.0012112711000415851,renk (std / fark),iii_cok_merkezli_bio
+renk_halka_b_ort,0.003221624293866706,0.0015298232823429255,mutlak zemin rengi,iii_cok_merkezli_bio
+renk_halka_H_ort,0.0026547711971006325,0.0003135427166892778,mutlak zemin rengi,iii_cok_merkezli_bio
+doku_contrast_d1,0.0024432825529533777,0.0004715202211628675,doku,iii_cok_merkezli_bio
+doku_homogeneity_d2,0.0019712031743074343,0.0011912989305115133,doku,iii_cok_merkezli_bio
+renk_fark_deltaE,0.0016743676082536796,0.00034861439447656027,renk (std / fark),iii_cok_merkezli_bio
+sekil_bio_konveksite,0.0015897093723887072,0.00020140929549636823,biyolojik,iii_cok_merkezli_bio
+sekil_eksantrisite,0.001509160107424375,0.0009052503699435841,şekil,iii_cok_merkezli_bio
+renk_cekirdek_a_std,0.0014171370796058163,0.0002447182429997673,renk (std / fark),iii_cok_merkezli_bio
+sekil_bio_cukur_derinligi,0.0014138389489246987,9.97785359094055e-05,biyolojik,iii_cok_merkezli_bio
+doku_homogeneity_d3,0.0014106128829749116,0.0007004847108811963,doku,iii_cok_merkezli_bio
+sekil_girinti_derinligi,0.0013793396269977294,0.0001438722740795753,şekil,iii_cok_merkezli_bio
+doku_bio_lbp_r1_duzensiz,0.0012354770704293323,0.000761680924180787,biyolojik,iii_cok_merkezli_bio
+sekil_solidity,0.001069691878235209,0.00010183155145776413,şekil,iii_cok_merkezli_bio
+sekil_extent,0.0009745524151485071,0.0003551439475496809,şekil,iii_cok_merkezli_bio
+doku_energy_d1,0.0009332154780523257,0.000400840396040532,doku,iii_cok_merkezli_bio
+doku_contrast_d3,0.0009240714131038367,0.00018517843281226843,doku,iii_cok_merkezli_bio
+doku_dissimilarity_d3,0.0007751463718482787,0.00025485860622753573,doku,iii_cok_merkezli_bio
+doku_contrast_d2,0.0007596009165603546,0.0008603992623281844,doku,iii_cok_merkezli_bio
+doku_bio_nukleol_kontrast,0.0007250850964989711,0.00017122365486281266,biyolojik,iii_cok_merkezli_bio
+sekil_cevre,0.0006841197852111384,0.0007858401147842392,şekil,iii_cok_merkezli_bio
+doku_dissimilarity_d2,0.0006469993770923018,0.00022818956435936486,doku,iii_cok_merkezli_bio
+sekil_bio_fourier_yuksek,0.0005436291115247608,0.00043493665543984625,biyolojik,iii_cok_merkezli_bio
+sekil_dairesellik,0.0005184924522619131,0.0008546894409020677,şekil,iii_cok_merkezli_bio
+doku_bio_lbp_r1_entropi,0.0004947035801362576,0.00018138653284678808,biyolojik,iii_cok_merkezli_bio
+doku_correlation_d2,0.0004798857953834205,0.000792864999582558,doku,iii_cok_merkezli_bio
+renk_halka_S_std,0.00047455153791142735,0.0009634381595566619,renk (std / fark),iii_cok_merkezli_bio
+doku_correlation_d1,0.0003227662955740766,0.0011273478703933853,doku,iii_cok_merkezli_bio
+renk_cekirdek_b_std,0.0002800708436770198,0.0009383009644342049,renk (std / fark),iii_cok_merkezli_bio
+doku_dissimilarity_d1,0.00023863892144178797,0.0010796438702409736,doku,iii_cok_merkezli_bio
+doku_ASM_d2,0.00010994381950409544,7.4931429700305e-05,doku,iii_cok_merkezli_bio
+doku_ASM_d3,8.78164422753273e-05,0.00031364869348653754,doku,iii_cok_merkezli_bio
+doku_bio_glcm_d5_contrast,7.860241194298141e-05,0.000740126538411152,biyolojik,iii_cok_merkezli_bio
+sekil_lob_sayisi,-5.364356159764938e-05,0.0,şekil,iii_cok_merkezli_bio
+doku_entropi,-6.0409779057339165e-05,0.0007032068360646795,doku,iii_cok_merkezli_bio
+doku_bio_glcm_d5_homogeneity,-0.0001120020061471753,0.0001288270819947599,biyolojik,iii_cok_merkezli_bio
+renk_halka_b_std,-0.00021972669142489298,0.0007595737233122533,renk (std / fark),iii_cok_merkezli_bio
+doku_bio_lbp_r2_entropi,-0.00025486544460022004,0.0005573320429353274,biyolojik,iii_cok_merkezli_bio
+doku_energy_d2,-0.0002921871860091703,0.00013212581167642396,doku,iii_cok_merkezli_bio
+sekil_buyuk_eksen,-0.0003733079537056409,0.0009674998131068596,şekil,iii_cok_merkezli_bio
+doku_bio_nukleol_sayi,-0.0004536543103018283,0.00022194820370780317,biyolojik,iii_cok_merkezli_bio
+doku_energy_d3,-0.0004880558239712303,0.00034050200403284254,doku,iii_cok_merkezli_bio
+doku_ASM_d1,-0.0005091378049137582,0.0003982284121139479,doku,iii_cok_merkezli_bio
+doku_homogeneity_d1,-0.0005881094639593742,0.0005679896202942882,doku,iii_cok_merkezli_bio
+doku_bio_sitoplazma_koyu_nokta,-0.000811378713014029,0.0008406357859406183,biyolojik,iii_cok_merkezli_bio
+renk_fark_a,-0.0010625353079127449,0.0002535433547540497,renk (std / fark),iii_cok_merkezli_bio
+renk_cekirdek_b_ort,-0.0017543735872938375,0.0006191232105216272,mutlak çekirdek rengi,iii_cok_merkezli_bio
+renk_fark_b,-0.002025115900905335,0.0001793656105628636,renk (std / fark),iii_cok_merkezli_bio

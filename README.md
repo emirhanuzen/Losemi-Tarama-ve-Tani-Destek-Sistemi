@@ -333,6 +333,38 @@ Model, eğitimde hiç görülmemiş iki veri setinde sınandı. **Kaggle'daki ba
 ![Münih TEST karışıklık matrisi](outputs/external/munih_test_karisiklik_mevcut.png)
 *Münih TEST görüntülerinde mevcut modelin merkez hücre tahminleri (görüntüler: Matek ve ark. 2019, CC BY 3.0).*
 
+### Çok merkezli eğitim ve laboratuvar dışarıda bırakma
+
+Kaggle, ALL-IDB ve Münih birlikte kullanıldı ve başarı **laboratuvar dışarıda bırakma (LOSO)** ile ölçüldü: her katta
+test laboratuvarı eğitime hiç girmez (kodla doğrulandı). Mevcut 58 özniteliğe 15 biyolojik öznitelik eklendi (nükleol,
+sitoplazma granülerliği, çok ölçekli kromatin dokusu, çekirdek kenar düzensizliği). Kaynak dengesi için kaynak × sınıf
+başına ağırlık tavanı (1000 hücre) kullanıldı. Hiperparametreler her katın kendi eğitim verisinde seçildi; seçim
+kuralı sonuçlardan önce sabitlendi.
+
+| Yapılandırma | A: ALL-IDB ALL→ALL | A: Healthy özgüllük | B: Münih dengeli doğ. | C: Kaggle test görüntü F1 |
+|---|---:|---:|---:|---:|
+| Mevcut model | 0.027 | 0.435 | 0.320 | 0.967 |
+| Çok merkezli, 58 öznitelik (seçilen) | 0.067 | 0.283 | 0.333 | 0.961 |
+| Çok merkezli + biyolojik | 0.040 | 0.326 | 0.322 | 0.967 |
+| + kaynak AUC ≥ 0.90 öznitelikler çıkarılmış | 0.027 | 0.717 | 0.337 | 0.956 |
+
+*Kat A: Kaggle (ALL-IDB kaynaklılar hariç) + Münih → ALL-IDB. Kat B: Kaggle + ALL-IDB → Münih TEST. Kat C: üçü →
+Kaggle kilitli test.*
+
+- **Çok merkezli eğitim, laboratuvardan bağımsız bir ALL/AML ayrımı sağlamadı.** Görülmemiş laboratuvarda ALL
+  görüntülerinin %93'ü hâlâ AML tipleniyor; Münih'te sonuç şans düzeyinde.
+- Model laboratuvar içinde çalışıyor: iç CV'de her kaynak × sınıfta duyarlılık 0.88-0.98. Ama laboratuvarlar
+  arasında genellenmiyor.
+- **Laboratuvar kısayolu:** özniteliklerden hücrenin hangi laboratuvardan geldiği AUC 0.98-0.999 ile tahmin
+  edilebiliyor, aynı sınıf içinde de 0.96-1.00. Yalnızca biyolojik özniteliklerle bile 0.89-0.94.
+- Biyolojik öznitelikler kaynağı tek başına ele vermiyor (sınıf içi kaynak AUC'si ≤ 0.86), ama laboratuvarlar arası
+  genellemeye ölçülebilir katkı da yapmıyor.
+- Son model `losemi_siniflandirici_v3_kalibre` üç kaynağın tamamıyla eğitildi (temperature kalibrasyonu, yeni risk
+  eşikleri). **Dış test seti kalmadı;** başarısı LOSO ile tahmin edilir. **Varsayılan yapılmadı.**
+- Ayrıntılar: `docs/sunum_notlari.md` (Adım 9) ve `outputs/multicenter/`.
+
+![LOSO sonuçları](outputs/multicenter/loso_sonuclari.png)
+
 ## Kısıtlar ve ileride yapılacaklar
 
 **Kısıtlar**
@@ -344,7 +376,8 @@ Model, eğitimde hiç görülmemiş iki veri setinde sınandı. **Kaggle'daki ba
   lenfosit de "ALL"/"AML" sayılıyor, dolayısıyla hücre düzeyi metrikler etiket gürültüsü içeriyor.
 - **Dış veriye genellenmiyor.** [Dış doğrulamada](#dış-doğrulama) ALL-IDB'de özgüllük 0.43, Münih'te dengeli
   doğruluk şans düzeyinde. Kaggle'da AML ayrı bir çekim kaynağından geliyor ve model bu kaynak imzasını öğreniyor.
-  Kilitli test sonuçları yalnızca Kaggle'a benzer görüntüler için geçerli.
+  Kilitli test sonuçları yalnızca Kaggle'a benzer görüntüler için geçerli. Üç laboratuvarla çok merkezli eğitim de görülmemiş laboratuvara
+  genellenmedi ([LOSO](#çok-merkezli-eğitim-ve-laboratuvar-dışarıda-bırakma)).
 - **Kalan sızıntı ölçülemez.** "Kaynağı bilinmiyor" ALL-IDB'de bulunamadı demektir. Kaynak tespitinin ve kopya
   tespitinin kaçırdığı türevler hâlâ farklı gruplarda olabilir.
 - **Görüntü tipi dağılımı.** Normal sınıfta yakın çekim yok, AML'de çok az (test setinde 1 görüntü). Yakın çekimlerde
@@ -352,8 +385,9 @@ Model, eğitimde hiç görülmemiş iki veri setinde sınandı. **Kaggle'daki ba
 - **Segmentasyon kapsaması.** K-means, normal görüntülerin bir kısmında hiç çekirdek bulamıyor.
 
 **İleride yapılacaklar**
-- Çok merkezli eğitim verisi: ek deneyde Münih'ten 360 etiketli hücre Münih başarısını 0.91'e çıkardı.
-  Bağımsız doğrulama için üçüncü bir merkez gerekir.
+- Daha çok laboratuvar: üç laboratuvarla yapılan LOSO genelleme göstermedi, çünkü ALL ve AML'nin her biri eğitimde
+  tek bir laboratuvarla temsil ediliyor. Her sınıfın birden çok laboratuvardan geldiği veri ya da her yeni
+  laboratuvar için küçük bir etiketli uyarlama kümesi gerekir.
 - Hücre düzeyinde etiketlenmiş veriyle eğitim ve değerlendirme.
 - Elle işaretlenmiş çekirdek maskeleriyle segmentasyonun doğrudan ölçülmesi.
 - Kapsama sorununun segmentasyon tarafında çözülmesi. Şu an K-means hücre bulamazsa Otsu'ya geri dönülüyor ve az
@@ -414,6 +448,14 @@ python -m src.external_validation allidb segmentasyon allidb2_teshis   # ALL-IDB
 python -m src.munich_overlap && python -m src.munich_overlap kapsamli  # Münih ↔ Kaggle kaynak ön kontrolü
 python -m src.external_validation munich_bolum munich_teshis           # kilitli Münih AYAR/TEST ayrımı, teşhis
 python -m src.domain_shift denemeler && python -m src.domain_shift sonuc  # düzeltme denemeleri, son değerlendirme
+# Çok merkezli eğitim ve LOSO (outputs/multicenter/; sırayla, kural LOSO'dan ÖNCE yazılır)
+python -m src.multicenter oznitelik    # üç kaynağın 58 + 15 biyolojik özniteliği (data/processed/multicenter/)
+python -m src.multicenter kisayol      # öznitelik başına kaynak / görüntü tipi AUC'si
+python -m src.multicenter kural        # ön kayıtlı seçim kuralı
+python -m src.multicenter loso && python -m src.multicenter ozet   # katlar A, A_idb_dahil, B, C
+python -m src.multicenter laboratuvar  # laboratuvar kısayolu testi
+python -m src.multicenter son_model    # v3 (models/losemi_siniflandirici_v3_kalibre; varsayılan DEĞİL)
+python -m src.multicenter gorseller
 ```
 
 ### Arayüz
@@ -474,11 +516,15 @@ Ardından Windows'taki tarayıcıda **http://localhost:8501** açılır. Durdurm
 │   ├── segmentation_analysis.py   Segmentasyon karşılaştırması (etiket gerektirmeyen ölçütler)
 │   ├── features.py              58 şekil, renk ve GLCM doku özniteliği
 │   ├── features_analysis.py     Kısayol testi, öznitelik önemi, korelasyon
+│   ├── bio_features.py          15 biyolojik öznitelik (nükleol, granülerlik, kromatin, kenar düzensizliği)
 │   ├── classifier.py            Veri ayrımı, modeller, değerlendirme, son model ve test
 │   ├── classification_analysis.py Model/segmentasyon karşılaştırması, ablasyon, kısayol, kenar deneyleri
 │   ├── allidb_overlap.py        Kaggle ↔ ALL-IDB kaynak tespiti
 │   ├── source_groups.py         Kaynak grupları (kaynak_grup_id) ve sızıntısız kilitli ayrım
 │   ├── leakage_analysis.py      Eski modelin temiz değerlendirmesi, kaynak kısayolu testi
+│   ├── external_validation.py   Dış doğrulama: ALL-IDB, Münih ayrımı ve teşhis
+│   ├── domain_shift.py          Alan kayması düzeltme denemeleri
+│   ├── multicenter.py           Çok merkezli eğitim, LOSO, laboratuvar kısayolu testi, v3
 │   ├── risk_report.py           Risk skoru, risk seviyesi, güven bayrağı ve PDF rapor
 │   ├── risk_analysis.py         Risk eşiklerinin seçimi, örnek raporlar, pipeline tutarlılık kontrolü
 │   └── pipeline.py              Uçtan uca pipeline (tek görüntü → risk ve PDF)

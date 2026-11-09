@@ -1,0 +1,10 @@
+madde,tanim,deger
+skor,(Kat A ALL tiplemesi oranı + Kat B dengeli doğruluk) / 2; en yüksek seçilir,
+Kat A ALL tiplemesi,ALL-IDB güvenli ALL görüntülerinde görüntü tahmini = ALL oranı (kenara değmeyen hücrelerin ortalama olasılığı; Adım 8 tanımı),
+Kat B dengeli doğruluk,"Münih TEST merkez hücre: MYO→AML, LYT→Healthy, NGS→Healthy duyarlılıklarının ortalaması",
+kısıt,Kat C (Kaggle kilitli test) görüntü makro F1 ≥ mevcut model − eşik,0.02
+adaylar,i_mevcut; ii_cok_merkezli_58; iii_cok_merkezli_bio; iv_bio_kaynak_ayikli,
+eşitlik,skor eşitse Kat C görüntü makro F1 yüksek olan,
+hiçbiri sağlamazsa,i_mevcut,
+(iv) kaynak AUC eşiği,sınıf içi kaynak AUC'si ≥ eşik olan öznitelikler çıkarılır (her katın eğitim verisinde),0.9
+kayıt zamanı,2026-11-09 11:19:23,
