@@ -36,6 +36,17 @@ ALLIDB_DIR = Path(os.environ.get("LOSEMI_ALLIDB_DIR") or ALLIDB_DEFAULT_DIRS[
 MUNICH_DIR = Path(os.environ.get("LOSEMI_MUNICH_DIR") or ALLIDB_DEFAULT_DIRS[
     "windows" if os.name == "nt" else ("wsl" if is_wsl() else "diger")])
 
+# LeukemiaAttri (Rehman ve ark., MICCAI 2024; arXiv 2504.02602), H_100X_C1 alt kümesi: Images/{train,test},
+# json_labels/{train,test}.json (COCO kutuları + 7 morfolojik öznitelik). Lisansı belirsiz: proje dışında tutulur,
+# görüntü içeren hiçbir dosya git'e girmez. Öncelik LOSEMI_LEUKEMIAATTRI_DIR ortam değişkeni.
+LEUKEMIAATTRI_DEFAULT_DIRS = {
+    "windows": Path(r"C:\Users\Emirhan\Downloads\H_100X_C1-20261109T095305Z-1-001\H_100X_C1"),
+    "wsl": Path("/mnt/c/Users/Emirhan/Downloads/H_100X_C1-20261109T095305Z-1-001/H_100X_C1"),
+    "diger": PROJECT_ROOT / "data" / "external" / "H_100X_C1",
+}
+LEUKEMIAATTRI_DIR = Path(os.environ.get("LOSEMI_LEUKEMIAATTRI_DIR") or LEUKEMIAATTRI_DEFAULT_DIRS[
+    "windows" if os.name == "nt" else ("wsl" if is_wsl() else "diger")])
+
 DATA_DIR = ROOT_DIR / "data"
 RAW_DATA_DIR = DATA_DIR / "raw"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
@@ -56,6 +67,7 @@ STAGE_OUTPUT_DIRS = {
     "risk": OUTPUTS_DIR / "risk",
     "external": OUTPUTS_DIR / "external",
     "multicenter": OUTPUTS_DIR / "multicenter",
+    "leukemiaattri": OUTPUTS_DIR / "leukemiaattri",
 }
 # ALL-IDB görüntüsü içeren figürler ve dış veri ara dosyaları (git dışı: data/ .gitignore kapsamında)
 EXTERNAL_PROCESSED_DIR = DATA_DIR / "processed" / "external"
@@ -469,3 +481,59 @@ MULTICENTER_SOURCE_AUC_MAX = 0.90
 MULTICENTER_MAX_KAGGLE_DROP = 0.02
 # Çok merkezli son model (üç kaynağın tamamı, temperature kalibrasyonlu). Varsayılan model (ACTIVE_MODEL_FILE) DEĞİŞMEZ.
 MULTICENTER_MODEL_FILE = "losemi_siniflandirici_v3_kalibre"
+
+
+# ---------------------------------------------------------------------------
+# LeukemiaAttri ve laboratuvardan bağımsız ALL/AML ayrımı (Adım 10; python -m src.leukemiaattri)
+# ---------------------------------------------------------------------------
+# Hücre tabloları ve görüntü içeren kontrol figürleri (git dışı: lisans belirsiz)
+LEUKEMIAATTRI_PROCESSED_DIR = PROCESSED_DATA_DIR / "leukemiaattri"
+# En-boy düzeltmesi: 640×640 görüntüler dikeyde gerilmiş. Eritrositlerin kutu yüksekliği / genişliği medyanı 1.53
+# (60 görüntü), lökosit etiket kutularınınki 14 hücre tipinin HEPSİNDE 1.33-1.53 (medyan 1.47); yuvarlak hücrelerin
+# tipten bağımsız aynı oranda uzaması görüntünün kendisinin gerildiğini gösterir (3:2 kamera karesi kareye
+# sıkıştırılmış). Düzeltilmezse eksantrisite / eksen oranı laboratuvarı ele verir. Yükseklik 1/1.5 ile ölçeklenir
+# (büyütme yerine küçültme: yeni bilgi uydurulmaz).
+LEUKEMIAATTRI_ASPECT = 1.5
+# Eritrosit çapı: tüm set aynı büyütmede (1000×, 640 px), yani gerçek çap görüntüden görüntüye neredeyse sabit; görüntü
+# başına tahmin ise 6-156 px arasında dağılıyor (yoğun blast alanlarında eritrosit maskesi sitoplazma / hücre
+# kümelerini yakalıyor). Görüntü tahmini ancak güvenilirse ve TRAIN görüntülerinin güvenilir tahminlerinin medyanına
+# ±%30 yakınsa kullanılır, aksi hâlde bu medyan. ±%30: aynı büyütmede gerçek eritrosit çapı değişkenliği (~6-9 µm,
+# ortalama 7.5) bu aralıkta; daha uzak değerler ölçüm hatasıdır.
+LEUKEMIAATTRI_RBC_TOLERANCE = 0.3
+# Kutu içi çekirdek: K-means (k=3, Adım 2 kuralı) yalnızca etiket kutusunun içinde. Maske kontrol figüründe (14 hücre
+# tipi) çekirdek sınırları doğru; nadir hata bazofilik sitoplazmanın çekirdeğe katılması. Maske içinde ikinci bir k=2
+# ayrımı denendi (maske/kutu ≥ 0.5, ΔE ≥ 12): hücrelerin ~%2'sinde devreye girdi, miyelosit / monositte düzeltti ama
+# lenfosit ve blastlarda sınırı pürüzlü hâle getirip küçülttü; net yarar olmadığı için eklenmedi.
+# Etiket eşlemesi (hücre tipi → proje sınıfı). Ana tanım: ALL hastalarındaki lenfoblast → ALL; AML ve APML
+# hastalarındaki miyeloblast → AML. Ek AML varyantı: monoblast, promonosit (AML-M4/M5) ve anormal promiyelosit
+# (APML = AML-M3). Healthy: olgun normal lökositler. Dışarıda: atipik lenfosit (CLL), miyelosit / metamiyelosit
+# (olgunlaşmamış granülosit, ağırlıkla CML), "none" (tipi belirlenmemiş), CML / CLL hastalarındaki blastlar ve ALL
+# hastasındaki tek miyeloblast (etiket gürültüsü).
+LEUKEMIAATTRI_MAIN_LABELS = {("ALL", "lymphoblast"): "ALL", ("AML", "myeloblast"): "AML", ("APML", "myeloblast"): "AML"}
+LEUKEMIAATTRI_EXTRA_AML = ["monoblast", "promonocyte", "abnormal promyelocyte"]
+LEUKEMIAATTRI_HEALTHY = ["neutrophil", "lymphocyte", "monocyte", "eosinophil", "basophil"]
+LEUKEMIAATTRI_ATTRIBUTES = ["cell_size", "nuclear_chromatio", "nuclear_shape", "nucleolus", "cytoplasm",
+                            "cytoplasmic_basophilia", "cytoplasmic_vacuoles"]
+# Healthy alt tip dengesi: LeukemiaAttri Healthy hücrelerinin ~%67'si nötrofil (lenfosit ~%17). Nötrofilin loblu
+# çekirdeği kolay bir ipucu; model "loblu çekirdek = sağlıklı" kısayolunu öğrenirse lenfoblastın asıl zor karşıtı
+# olan lenfositi ayıramaz. Eğitimde nötrofillerin toplam ağırlığı lenfositlerin toplamına eşitlenir (tavan); lenfosit,
+# monosit, eozinofil ve bazofil olduğu gibi kalır (az olanlar yukarı ağırlıklandırılmaz, bkz. MULTICENTER_SOURCE_CAP).
+LEUKEMIAATTRI_NEUTROPHIL_CAP_TO = "lymphocyte"
+# LeukemiaAttri içi CV: hasta gruplu 5 kat (StratifiedGroupKFold): her doğrulama katında ~3 ALL ve ~3 AML hastası.
+LEUKEMIAATTRI_CV_FOLDS = 5
+# CORAL küçültmesi: kaynak korelasyon matrisine λ·I eklenir (Sun ve ark., 2016 varsayılanı λ = 1). Standartlaştırılmış
+# özniteliklerde köşegen 1 olduğu için λ = 1 köşegen dışı terimleri yarıya çeker: küçük kaynaklarda (ALL-IDB ~1000
+# hücre, 73 öznitelik) gürültülü kovaryansın tersinin kökü kararsız olmasın.
+LEUKEMIAATTRI_CORAL_LAMBDA = 1.0
+# Ön kayıtlı seçim kuralı: skor = (LOSO A ALL→ALL + LOSO B dengeli doğruluk + LA-CV ALL/AML dengeli doğruluk) / 3;
+# Kaggle v2 kilitli test görüntü makro F1 mevcut modele göre en fazla 0.03 düşebilir.
+LEUKEMIAATTRI_MAX_KAGGLE_DROP = 0.03
+# Yapılandırma karşılaştırmasında sabit HGB hiperparametreleri. Her kat × yapılandırmada MULTICENTER_GRID iç CV'si
+# ~270 sn sürüyor (8 yapılandırma × 8 kat ≈ 5 saat). İlk kat (a, LOSO A) iç CV'sinde ızgara farkları küçüktü
+# (ağırlıklı makro F1 0.756-0.774) ve en iyisi lr 0.05 / 15 yaprak; Adım 9'da da 0.05 seçilmişti. Seçim yalnızca
+# eğitim verisinin iç CV'sinden; test kaynaklarına bakılmadı. Son model (v4) yine ızgarada iç CV ile ayarlanır.
+LEUKEMIAATTRI_PARAMS = {"learning_rate": 0.05, "max_leaf_nodes": 15, "max_iter": 300, "early_stopping": False}
+# Hasta düzeyi bootstrap: 2000 tekrar, %95 yüzdelik aralık; hastalar tanı içinde yerine koyarak çekilir.
+LEUKEMIAATTRI_BOOTSTRAP = 2000
+# Adım 10 son modeli. Varsayılan model (ACTIVE_MODEL_FILE) DEĞİŞMEZ.
+LEUKEMIAATTRI_MODEL_FILE = "losemi_siniflandirici_v4_kalibre"

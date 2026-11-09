@@ -1,0 +1,5 @@
+learning_rate,max_leaf_nodes,max_iter,early_stopping,ic_cv_agirlikli_makro_f1
+0.05,15,300,False,0.8433029231931456
+0.05,31,300,False,0.8412619303365058
+0.1,15,300,False,0.844270321543754
+0.1,31,300,False,0.8426344473292611

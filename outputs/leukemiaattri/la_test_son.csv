@@ -1,0 +1,25 @@
+model,olcu,deger,yapilandirma,kayit
+v4,n_ALL,191.0,a_cok_merkezli,2026-11-09 16:59:35
+v4,n_AML,237.0,a_cok_merkezli,2026-11-09 16:59:35
+v4,n_Healthy,726.0,a_cok_merkezli,2026-11-09 16:59:35
+v4,duyarlilik_ALL,0.450261780104712,a_cok_merkezli,2026-11-09 16:59:35
+v4,duyarlilik_AML,0.6455696202531646,a_cok_merkezli,2026-11-09 16:59:35
+v4,duyarlilik_Healthy,0.8870523415977961,a_cok_merkezli,2026-11-09 16:59:35
+v4,makro_f1,0.6517600137997982,a_cok_merkezli,2026-11-09 16:59:35
+v4,blast_ALL_dogru,0.5340314136125655,a_cok_merkezli,2026-11-09 16:59:35
+v4,blast_AML_dogru,0.6919831223628692,a_cok_merkezli,2026-11-09 16:59:35
+v4,blast_dengeli_dogruluk,0.6130072679877173,a_cok_merkezli,2026-11-09 16:59:35
+v4,blast_anormal_orani,0.9135514018691588,a_cok_merkezli,2026-11-09 16:59:35
+v4,ek_AML_n,298.0,a_cok_merkezli,2026-11-09 16:59:35
+v4,ek_AML_AML_orani,0.7785234899328859,a_cok_merkezli,2026-11-09 16:59:35
+v4,ek_AML_blast_AML_orani,0.8859060402684564,a_cok_merkezli,2026-11-09 16:59:35
+v4,healthy_neutrophil,0.962,a_cok_merkezli,2026-11-09 16:59:35
+v4,healthy_lymphocyte,0.5977011494252874,a_cok_merkezli,2026-11-09 16:59:35
+v4,healthy_monocyte,0.7596153846153846,a_cok_merkezli,2026-11-09 16:59:35
+v4,healthy_eosinophil,0.90625,a_cok_merkezli,2026-11-09 16:59:35
+v4,healthy_basophil,1.0,a_cok_merkezli,2026-11-09 16:59:35
+v4,hasta_n,9.0,a_cok_merkezli,2026-11-09 16:59:35
+v4,hasta_blast_cogunluk_dogru,0.6666666666666666,a_cok_merkezli,2026-11-09 16:59:35
+v4,hasta_baskin_tip_dogru,0.7777777777777778,a_cok_merkezli,2026-11-09 16:59:35
+v4,hasta_blast_cogunluk_dogru_ALL,0.5,a_cok_merkezli,2026-11-09 16:59:35
+v4,hasta_blast_cogunluk_dogru_AML,0.8,a_cok_merkezli,2026-11-09 16:59:35

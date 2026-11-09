@@ -1,0 +1,12 @@
+madde,tanim,deger
+skor,(LOSO A ALL→ALL + LOSO B dengeli doğruluk + LA-CV ALL/AML dengeli doğruluk) / 3; en yüksek seçilir,
+LOSO A ALL→ALL,ALL-IDB güvenli ALL görüntülerinde görüntü tahmini = ALL oranı (Adım 9 Kat A tanımı); eğitimde ALL-IDB ve ALL-IDB kaynaklı Kaggle yok,
+LOSO B dengeli doğruluk,"Münih TEST merkez hücre: MYO→AML, LYT→Healthy, NGS→Healthy duyarlılıklarının ortalaması; eğitimde Münih yok",
+LA-CV ALL/AML dengeli doğruluk,"LeukemiaAttri TRAIN, hasta gruplu 5 kat, katlar dışı: etiketli blastlarda (lenfoblast→ALL, miyeloblast→AML) P(ALL) ≥ P(AML) tiplemesinin iki sınıf duyarlılığı ortalaması",
+kısıt,Kaggle v2 kilitli test görüntü makro F1 ≥ mevcut model − eşik,0.03
+kısıt tabanı,mevcut model (v2_kalibre) Kaggle görüntü makro F1 (Adım 9 Kat C),0.9668
+adaylar,a_cok_merkezli; b_dengeli; b_ek_aml; c_renksiz; c_goreli_renk; d_zskor; d_coral; e_oznitelik_tahmini,
+eşitlik,skor eşitse Kaggle görüntü makro F1 yüksek olan,
+hiçbiri sağlamazsa,"skoru en yüksek olan seçilir, kısıt ihlali raporlanır; varsayılan model zaten değişmez",
+LA TEST,seçimde kullanılmaz; seçilen yapılandırma yalnızca bir kez değerlendirilir,
+kayıt zamanı,2026-11-09 16:07:53,

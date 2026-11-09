@@ -1,0 +1,15 @@
+hucre_tipi,test,train,ALL,AML,Healthy,dışarıda
+abnormal promyelocyte,157,109,0,0,0,266
+atypical lymphocyte,197,222,0,0,0,419
+basophil,3,15,0,0,18,0
+eosinophil,32,53,0,0,85,0
+lymphoblast,191,1510,1701,0,0,0
+lymphocyte,87,228,0,0,315,0
+metamyelocyte,26,74,0,0,0,100
+monoblast,120,357,0,0,0,477
+monocyte,104,99,0,0,203,0
+myeloblast,277,1818,0,1999,0,96
+myelocyte,121,176,0,0,0,297
+neutrophil,500,775,0,0,1275,0
+none,348,2115,0,0,0,2463
+promonocyte,21,322,0,0,0,343

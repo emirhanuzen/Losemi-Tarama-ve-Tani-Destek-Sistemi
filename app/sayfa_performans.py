@@ -332,6 +332,50 @@ def multicenter() -> None:
     show_table(output_csv("multicenter", "v3_model_ozeti.csv"))
 
 
+LA = STAGE_OUTPUT_DIRS["leukemiaattri"]
+LA_COLUMNS = {
+    "ad": "Yapılandırma", "A_ALL_tipleme": "LOSO A: ALL-IDB ALL→ALL", "A_healthy_ozgulluk": "LOSO A: Healthy özgüllük",
+    "B_dengeli_dogruluk": "LOSO B: Münih dengeli doğ.", "LA_blast_dengeli_dogruluk": "LA-CV: ALL/AML dengeli doğ.",
+    "LA_duyarlilik_Healthy": "LA-CV: Healthy duyarlılığı", "LA_hasta_blast_cogunluk_dogru": "LA-CV: hasta tipi doğru",
+    "C_goruntu_makro_f1": "Kaggle test görüntü F1", "skor": "Ön kayıtlı skor", "kisit_saglandi": "Kısıt",
+    "secilen": "Seçilen",
+}
+LA_TEST_NAMES = {"blast_dengeli_dogruluk": "Blast ALL/AML dengeli doğruluk", "duyarlilik_ALL": "ALL→ALL",
+                 "duyarlilik_AML": "AML→AML", "duyarlilik_Healthy": "Healthy→Healthy", "makro_f1": "Hücre makro F1",
+                 "hasta_blast_cogunluk_dogru": "Hasta: blast çoğunluğu doğru",
+                 "hasta_baskin_tip_dogru": "Hasta: baskın tip doğru"}
+
+
+def leukemiaattri() -> None:
+    """LeukemiaAttri ve laboratuvardan bağımsız ALL/AML ayrımı (Adım 10): başlangıç, yapılandırmalar, LA TEST, v4."""
+    st.subheader("LeukemiaAttri: laboratuvardan bağımsız ALL/AML ayrımı")
+    st.markdown(LEUKEMIAATTRI_OZET)
+    summary = output_csv("leukemiaattri", "yapilandirma_sonuclari.csv")
+    if summary is not None:
+        summary = summary[[c for c in LA_COLUMNS if c in summary.columns]].rename(columns=LA_COLUMNS)
+    show_table(summary)
+    show_figure(LA / "yapilandirma_sonuclari.png", "İlk iki satır referans modeller; ► ön kayıtlı kurala göre seçilen.")
+    st.markdown("**LeukemiaAttri TEST (4 ALL + 5 AML hastası; hasta bootstrap %95 güven aralığı)**")
+    comp = output_csv("leukemiaattri", "la_test_karsilastirma.csv")
+    if comp is not None:
+        comp = comp[comp["olcu"].isin(LA_TEST_NAMES)].assign(olcu=lambda t: t["olcu"].map(LA_TEST_NAMES)).rename(
+            columns={"model": "Model", "olcu": "Ölçü", "deger": "Değer", "alt": "GA alt", "ust": "GA üst"})
+    show_table(comp)
+    show_figure(LA / "la_test_karsilastirma.png", "v4'ün eğitiminde bu laboratuvar vardı (hastalar yoktu).")
+    show_figure(LA / "la_test_karisiklik.png", "Hücre düzeyi karışıklık matrisleri (yalnızca sayılar).")
+    st.markdown("**Laboratuvar kısayolu testi (aynı sınıf içinde kaynak AUC'si; 0.5 = ayırt edilemiyor)**")
+    lab = output_csv("leukemiaattri", "laboratuvar_kisayolu.csv")
+    if lab is not None:
+        lab = lab.rename(columns={"yapilandirma": "Temsil", "n_oznitelik": "n", "kaynak_makro_auc": "Kaynak AUC (tümü)",
+                                  "sinif_ici_kaynak_auc_ALL": "Sınıf içi: ALL", "sinif_ici_kaynak_auc_AML": "Sınıf içi: AML",
+                                  "sinif_ici_kaynak_auc_Healthy": "Sınıf içi: Healthy"})
+        lab = lab[[c for c in lab.columns if not c.startswith("sinif_ici_LA") and c not in ("kaynaklar", "sure_sn")]]
+    show_table(lab, skip=("n",))
+    show_figure(LA / "laboratuvar_kisayolu.png")
+    st.markdown("**v4 (varsayılan DEĞİL)**")
+    show_table(output_csv("leukemiaattri", "v4_model_ozeti.csv"))
+
+
 # Adım 8 özeti (docs/sunum_notlari.md "Adım 8 — Dış Doğrulama ve Alan Kayması" ile aynı sonuçlar)
 DIS_DOGRULAMA_OZET = """
 Model hiç görmediği iki veri setinde sınandı. **Kaggle'daki başarı başka merkezlere genellenmiyor.**
@@ -361,11 +405,27 @@ def page() -> None:
     st.title("Model Performansı")
     disclaimer()
     tabs = st.tabs(["Model karşılaştırması", "Kilitli test", "Risk seviyesi", "Ablasyon", "Öğrenme eğrisi",
-                    "Kalibrasyon", "Sızıntı", "Dış doğrulama", "Çok merkezli (LOSO)"])
+                    "Kalibrasyon", "Sızıntı", "Dış doğrulama", "Çok merkezli (LOSO)", "LeukemiaAttri"])
     for tab, section in zip(tabs, [model_comparison, locked_test, risk_levels, ablation, learning_curve,
-                                   calibration, leakage, external_validation, multicenter]):
+                                   calibration, leakage, external_validation, multicenter, leukemiaattri]):
         with tab:
             section()
+
+
+# Adım 10 özeti (outputs/leukemiaattri/ sonuçları)
+LEUKEMIAATTRI_OZET = """
+LeukemiaAttri'de (MICCAI 2024) lenfoblast, miyeloblast ve normal lökositler aynı laboratuvardan geliyor. Hücreler
+uzman kutularından kırpıldı; seçim kuralı sonuçlardan önce sabitlendi.
+
+- **Başlangıç (LA TEST, hiç görülmemiş laboratuvar):** mevcut model ve v3 neredeyse her hücreye AML diyor; blast
+  ALL/AML dengeli doğruluk 0.51 (şans).
+- **Seçilen (a) → v4, LA TEST:** blast ALL/AML dengeli doğruluk 0.61 (%95 GA 0.51-0.70), Healthy duyarlılığı 0.89.
+  Laboratuvar eğitimde görüldü, hastalar görülmedi.
+- **Görülmemiş laboratuvar:** ALL-IDB'de ALL→ALL hâlâ 0.03-0.08; Münih dengeli doğruluk 0.32 → 0.56.
+- **Darboğaz ölçüm:** yalnızca LA ile eğitimde bile blast tipi 0.51-0.61; uzman öznitelik etiketleriyle 0.995.
+  Nükleol ve sitoplazma bazofilisi bu çözünürlükte ölçülemiyor.
+- v4 kaydedildi, **varsayılan yapılmadı**.
+"""
 
 
 # Adım 9 özeti (docs/sunum_notlari.md "Adım 9 — Çok Merkezli Eğitim" ile aynı sonuçlar)
